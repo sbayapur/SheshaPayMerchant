@@ -1,0 +1,14 @@
+{
+  "name": "shesha-merchant",
+  "private": true,
+  "scripts": {
+    "dev": "npm --prefix frontend run dev",
+    "dev:api": "npm --prefix backend run dev",
+    "dev:full": "concurrently \"npm run dev\" \"npm run dev:api\"",
+    "build": "npm --prefix frontend run build",
+    "preview": "npm --prefix frontend run preview"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  }
+}
