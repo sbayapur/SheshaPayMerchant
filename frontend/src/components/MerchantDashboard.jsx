@@ -41,8 +41,41 @@ function MerchantDashboard({
   employeesError,
   onAddEmployee,
   onDeleteEmployee,
+  onLogout,
 }) {
   const API_BASE = import.meta.env?.VITE_API_BASE || "http://localhost:4000";
+  const baseUrl = window.location.origin.includes("localhost")
+    ? window.location.origin
+    : "https://demo.shesha";
+
+  const createPaymentLinkUrl = async (payment) => {
+    if (!payment?.id || !payment?.amount) return null;
+    try {
+      const res = await fetch(`${API_BASE}/api/payment-links`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          orderId: payment.id,
+          amount: payment.amount,
+          currency: payment.currency || "ZAR",
+          note: payment.note || "",
+          items: payment.items || [],
+          merchantName: "Sunrise Salon",
+          baseUrl,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || "Failed to create payment link");
+      }
+      const data = await res.json();
+      return data.url || (data.token ? `${baseUrl}/pay/${data.token}` : null);
+    } catch (err) {
+      console.error("Failed to create payment link", err);
+      return null;
+    }
+  };
+
   const [currentMode, setCurrentMode] = useState("dashboard"); // "dashboard", "checkout", or "admin"
   const [adminTab, setAdminTab] = useState("employees"); // "employees" or "accounting"
   const [showBankAuthModal, setShowBankAuthModal] = useState(false);
@@ -249,13 +282,8 @@ function MerchantDashboard({
       const phone = invoice?.customerPhone || "";
       const phoneDigits = phone.replace(/\D/g, "");
       const whatsappNumber = phoneDigits.startsWith("27") ? phoneDigits : `27${phoneDigits}`;
-      const orderId = payment.id;
-      const isoRef = `SHESHA-${orderId}`;
-      const baseUrl = window.location.origin.includes("localhost")
-        ? window.location.origin
-        : "https://demo.shesha";
-      const path = window.location.origin.includes("localhost") ? "/customer" : "/pay";
-      const checkoutLink = `${baseUrl}${path}?order=${encodeURIComponent(orderId)}&amount=${encodeURIComponent(payment.amount)}&note=${encodeURIComponent(payment.note || payment.description || "")}&iso_ref=${encodeURIComponent(isoRef)}`;
+      const checkoutLink = invoice?.checkoutLink || (await createPaymentLinkUrl(payment));
+      if (!checkoutLink) return;
       const message = encodeURIComponent(
         `Hi! This is a friendly reminder that you have an unpaid invoice of R${payment.amount?.toFixed(2) || "0.00"} from Sunrise Salon.\n\nPlease pay here: ${checkoutLink}`
       );
@@ -375,38 +403,21 @@ function MerchantDashboard({
     handleCloseInvoiceModal();
   };
 
-  const handleSendViaWhatsApp = () => {
-    if (!selectedPaymentForInvoice || !invoicePhoneNumber.trim()) {
+  const handleSendViaWhatsApp = async () => {
+    if (!selectedPaymentForInvoice || !invoicePhoneNumber.trim()) return;
+
+    const checkoutLink = await createPaymentLinkUrl(selectedPaymentForInvoice);
+    if (!checkoutLink) {
+      console.error("Failed to create payment link");
       return;
     }
-    
-    // Generate checkout link
-    const orderId = selectedPaymentForInvoice.id;
-    const isoRef = `SHESHA-${orderId}`;
-    // Include items array in URL if available
-    const itemsParam = selectedPaymentForInvoice.items ? `&items=${encodeURIComponent(JSON.stringify(selectedPaymentForInvoice.items))}` : '';
-    const baseUrl = window.location.origin.includes('localhost') 
-      ? window.location.origin 
-      : 'https://demo.shesha';
-    const path = window.location.origin.includes('localhost') ? '/customer' : '/pay';
-    const checkoutLink = `${baseUrl}${path}?order=${encodeURIComponent(
-      orderId
-    )}&amount=${encodeURIComponent(selectedPaymentForInvoice.amount)}&note=${encodeURIComponent(
-      selectedPaymentForInvoice.note || ""
-    )}&iso_ref=${encodeURIComponent(isoRef)}${itemsParam}`;
-    
-    // Format phone number (remove any non-digits, ensure it starts with country code)
-    const phoneNumber = invoicePhoneNumber.trim().replace(/\D/g, '');
-    const whatsappNumber = phoneNumber.startsWith('27') ? phoneNumber : `27${phoneNumber}`;
-    
-    // Create WhatsApp link
+
+    const phoneNumber = invoicePhoneNumber.trim().replace(/\D/g, "");
+    const whatsappNumber = phoneNumber.startsWith("27") ? phoneNumber : `27${phoneNumber}`;
     const whatsappMessage = encodeURIComponent(
       `Hi! Please pay R${selectedPaymentForInvoice.amount?.toFixed(2) || "0.00"} for ${selectedPaymentForInvoice.description || "your order"}.\n\nPay here: ${checkoutLink}`
     );
-    const whatsappUrl = `https://wa.me/${whatsappNumber}?text=${whatsappMessage}`;
-    
-    // Open WhatsApp
-    window.open(whatsappUrl, '_blank', 'noopener,noreferrer');
+    window.open(`https://wa.me/${whatsappNumber}?text=${whatsappMessage}`, "_blank", "noopener,noreferrer");
     handleCloseInvoiceModal();
   };
 
@@ -480,38 +491,30 @@ function MerchantDashboard({
 
     // If customer phone is provided, create an invoice (with reminder timer)
     if (phone) {
-      const orderId = paymentToAdd.id;
-      const isoRef = `SHESHA-${orderId}`;
-      const baseUrl = window.location.origin.includes("localhost")
-        ? window.location.origin
-        : "https://demo.shesha";
-      const pathStr = window.location.origin.includes("localhost") ? "/customer" : "/pay";
-      const itemsParam = paymentToAdd.items
-        ? `&items=${encodeURIComponent(JSON.stringify(paymentToAdd.items))}`
-        : "";
-      const checkoutLink = `${baseUrl}${pathStr}?order=${encodeURIComponent(orderId)}&amount=${encodeURIComponent(paymentToAdd.amount)}&note=${encodeURIComponent(paymentToAdd.note || "")}&iso_ref=${encodeURIComponent(isoRef)}${itemsParam}`;
-
-      try {
-        const apiBase = import.meta.env.VITE_API_BASE || "http://localhost:4000";
-        await fetch(`${apiBase}/api/invoices`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            paymentIntentId,
-            orderId: paymentToAdd.id,
-            customerPhone: phone,
-            amount: paymentToAdd.amount,
-            subtotal: paymentToAdd.amount / 1.15,
-            taxAmount: paymentToAdd.amount - paymentToAdd.amount / 1.15,
-            currency: paymentToAdd.currency || "ZAR",
-            items: paymentToAdd.items || [],
-            description: paymentToAdd.note || paymentToAdd.description || "",
-            checkoutLink,
-          }),
-        });
-        fetchInvoices();
-      } catch (err) {
-        console.warn("Failed to create invoice on backend:", err);
+      const checkoutLink = await createPaymentLinkUrl(paymentToAdd);
+      if (checkoutLink) {
+        try {
+          const apiBase = import.meta.env.VITE_API_BASE || "http://localhost:4000";
+          await fetch(`${apiBase}/api/invoices`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              paymentIntentId,
+              orderId: paymentToAdd.id,
+              customerPhone: phone,
+              amount: paymentToAdd.amount,
+              subtotal: paymentToAdd.amount / 1.15,
+              taxAmount: paymentToAdd.amount - paymentToAdd.amount / 1.15,
+              currency: paymentToAdd.currency || "ZAR",
+              items: paymentToAdd.items || [],
+              description: paymentToAdd.note || paymentToAdd.description || "",
+              checkoutLink,
+            }),
+          });
+          fetchInvoices();
+        } catch (err) {
+          console.warn("Failed to create invoice on backend:", err);
+        }
       }
     }
     
@@ -562,40 +565,31 @@ function MerchantDashboard({
     }
 
     // Generate checkout link for the invoice
-    const orderId = paymentToAdd.id;
-    const isoRef = `SHESHA-${orderId}`;
-    const baseUrl = window.location.origin.includes("localhost")
-      ? window.location.origin
-      : "https://demo.shesha";
-    const pathStr = window.location.origin.includes("localhost") ? "/customer" : "/pay";
-    const itemsParam = paymentToAdd.items
-      ? `&items=${encodeURIComponent(JSON.stringify(paymentToAdd.items))}`
-      : "";
-    const checkoutLink = `${baseUrl}${pathStr}?order=${encodeURIComponent(orderId)}&amount=${encodeURIComponent(paymentToAdd.amount)}&note=${encodeURIComponent(paymentToAdd.note || "")}&iso_ref=${encodeURIComponent(isoRef)}${itemsParam}`;
+    const checkoutLink = await createPaymentLinkUrl(paymentToAdd);
 
-    // Create invoice on backend (triggers reminder timer)
-    try {
-      const apiBase = import.meta.env.VITE_API_BASE || "http://localhost:4000";
-      await fetch(`${apiBase}/api/invoices`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          paymentIntentId,
-          orderId: paymentToAdd.id,
-          customerPhone: phone,
-          amount: paymentToAdd.amount,
-          subtotal: paymentToAdd.amount / 1.15,
-          taxAmount: paymentToAdd.amount - paymentToAdd.amount / 1.15,
-          currency: paymentToAdd.currency || "ZAR",
-          items: paymentToAdd.items || [],
-          description: paymentToAdd.note || paymentToAdd.description || "",
-          checkoutLink,
-        }),
-      });
-      // Refresh invoices map
-      fetchInvoices();
-    } catch (err) {
-      console.warn("Failed to create invoice on backend:", err);
+    if (checkoutLink) {
+      try {
+        const apiBase = import.meta.env.VITE_API_BASE || "http://localhost:4000";
+        await fetch(`${apiBase}/api/invoices`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            paymentIntentId,
+            orderId: paymentToAdd.id,
+            customerPhone: phone,
+            amount: paymentToAdd.amount,
+            subtotal: paymentToAdd.amount / 1.15,
+            taxAmount: paymentToAdd.amount - paymentToAdd.amount / 1.15,
+            currency: paymentToAdd.currency || "ZAR",
+            items: paymentToAdd.items || [],
+            description: paymentToAdd.note || paymentToAdd.description || "",
+            checkoutLink,
+          }),
+        });
+        fetchInvoices();
+      } catch (err) {
+        console.warn("Failed to create invoice on backend:", err);
+      }
     }
     
     // Close create invoice options modal first to prevent double-clicks
@@ -678,6 +672,16 @@ function MerchantDashboard({
               <h1 className="merchant-name">Shesha Pay</h1>
             </div>
           </div>
+          {onLogout && (
+            <button
+              type="button"
+              className="ghost-button"
+              onClick={onLogout}
+              style={{ fontSize: "0.85rem", padding: "6px 12px" }}
+            >
+              Sign out
+            </button>
+          )}
         </div>
 
         {currentMode === "admin" ? (

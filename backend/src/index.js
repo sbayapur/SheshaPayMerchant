@@ -1,7 +1,8 @@
 import express from "express";
 import cors from "cors";
 import morgan from "morgan";
-import { randomUUID } from "crypto";
+import rateLimit from "express-rate-limit";
+import { randomUUID, randomBytes } from "crypto";
 import { startPayment } from "./paymentsProvider.js";
 import { exchangeTellerToken } from "./tellerProvider.js";
 import { warmUpToken, hasStitchConfig } from "./stitchClient.js";
@@ -12,6 +13,22 @@ const port = process.env.PORT || 4000;
 app.use(cors());
 app.use(express.json());
 app.use(morgan("dev"));
+
+// Security headers
+app.use((_req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  next();
+});
+
+// Rate limiter for public payment link lookup (60 req/min per IP)
+const payTokenRateLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  message: { error: "Too many requests, please try again later" },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 
 const bankLinks = new Map();
 const payments = new Map();
@@ -25,6 +42,15 @@ const MAX_EVENTS = 50;
 // Per-payment-intent event log (paymentIntentId -> event[])
 // Stores the full ISO 20022 lifecycle for each transaction (no cap)
 const paymentIntentEvents = new Map();
+
+// ─── Payment Link Tokens (Secure Deep Links) ─────────────────────────────────
+const paymentLinks = new Map();       // token -> { orderId, amount, currency, note, items, isoRef, merchantName, createdAt, expiresAt, invoiceId? }
+const PAYMENT_LINK_TTL_DAYS = Number(process.env.PAYMENT_LINK_TTL_DAYS) || 30;
+const FRONTEND_BASE_URL = process.env.FRONTEND_BASE_URL || "https://demo.shesha";
+
+function generatePaymentLinkToken() {
+  return randomBytes(16).toString("base64url");
+}
 
 // ─── Invoice & Reminder System ───────────────────────────────────────────────
 const invoices = new Map();           // invoiceId -> invoice object
@@ -1126,6 +1152,84 @@ app.get("/api/demo/logs/payment-intent/:id/events", (req, res) => {
   });
 });
 
+// ─── Payment Link Tokens (Secure Deep Links) ─────────────────────────────────
+
+// Create a new payment link (returns token + url)
+app.post("/api/payment-links", (req, res) => {
+  const {
+    orderId,
+    amount,
+    currency = "ZAR",
+    note = "",
+    items = [],
+    invoiceId = null,
+    merchantName = "Sunrise Salon",
+    baseUrl,
+  } = req.body || {};
+
+  if (!orderId || !amount || amount <= 0) {
+    return res
+      .status(400)
+      .json({ error: "orderId and positive amount are required" });
+  }
+
+  const token = generatePaymentLinkToken();
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + PAYMENT_LINK_TTL_DAYS * 24 * 60 * 60 * 1000);
+  const isoRef = `SHESHA-${orderId}`;
+
+  const linkData = {
+    orderId,
+    amount: Number(amount),
+    currency,
+    note: String(note),
+    items: Array.isArray(items) ? items : [],
+    isoRef,
+    merchantName,
+    createdAt: now.toISOString(),
+    expiresAt: expiresAt.toISOString(),
+    invoiceId: invoiceId || null,
+  };
+
+  paymentLinks.set(token, linkData);
+  const frontendBase = baseUrl || FRONTEND_BASE_URL;
+  const url = `${frontendBase}/pay/${token}`;
+
+  console.log(`[PaymentLink] Created for ${orderId}, expires ${expiresAt.toISOString()}`);
+  res.status(201).json({ token, url });
+});
+
+// Public lookup: get payment context by token (for customer checkout)
+// Rate-limited, no auth required
+app.get("/api/pay/:token", payTokenRateLimiter, (req, res) => {
+  const { token } = req.params;
+  if (!token) {
+    return res.status(404).json({ error: "Not found" });
+  }
+
+  const linkData = paymentLinks.get(token);
+  if (!linkData) {
+    return res.status(404).json({ error: "Link not found or expired" });
+  }
+
+  const now = new Date();
+  if (new Date(linkData.expiresAt) < now) {
+    paymentLinks.delete(token); // Clean up expired
+    return res.status(404).json({ error: "Link not found or expired" });
+  }
+
+  // Return only sanitized data needed for checkout display
+  res.json({
+    orderId: linkData.orderId,
+    amount: linkData.amount,
+    currency: linkData.currency,
+    note: linkData.note,
+    items: linkData.items,
+    isoRef: linkData.isoRef,
+    merchantName: linkData.merchantName,
+  });
+});
+
 // ─── Invoice Endpoints ───────────────────────────────────────────────────────
 
 // Create a new invoice
@@ -1160,6 +1264,29 @@ app.post("/api/invoices", (req, res) => {
   const computedSubtotal = subtotal != null ? subtotal : amount / (1 + vatRate);
   const computedTax = taxAmount != null ? taxAmount : amount - computedSubtotal;
 
+  // Ensure we have a secure token-based checkout link (create if not provided)
+  let checkoutLinkToUse = checkoutLink;
+  if (!checkoutLinkToUse) {
+    const token = generatePaymentLinkToken();
+    const orderIdToUse = orderId || invoiceId;
+    const isoRef = `SHESHA-${orderIdToUse}`;
+    const expiresAt = new Date(now.getTime() + PAYMENT_LINK_TTL_DAYS * 24 * 60 * 60 * 1000);
+    paymentLinks.set(token, {
+      orderId: orderIdToUse,
+      amount: Number(amount),
+      currency,
+      note: String(description),
+      items: Array.isArray(items) ? items : [],
+      isoRef,
+      merchantName,
+      createdAt: now.toISOString(),
+      expiresAt: expiresAt.toISOString(),
+      invoiceId,
+    });
+    checkoutLinkToUse = `${FRONTEND_BASE_URL}/pay/${token}`;
+    console.log(`[Invoice] Auto-created payment link for ${invoiceId}`);
+  }
+
   const invoice = {
     id: invoiceId,
     paymentIntentId: paymentIntentId || null,
@@ -1182,7 +1309,7 @@ app.post("/api/invoices", (req, res) => {
     lastReminderAt: null,
     nextReminderAt: dueDate.toISOString(),
     maxReminders: MAX_REMINDERS_DEFAULT,
-    checkoutLink,
+    checkoutLink: checkoutLinkToUse,
   };
 
   invoices.set(invoiceId, invoice);

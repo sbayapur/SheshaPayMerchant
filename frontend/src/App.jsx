@@ -5,6 +5,10 @@ import Toast from "./components/Toast.jsx";
 import LogsView from "./components/LogsView.jsx";
 import TabletFrame from "./components/TabletFrame.jsx";
 import LoginScreen from "./components/LoginScreen.jsx";
+import PhoneFrame from "./components/PhoneFrame.jsx";
+import CheckoutView from "./components/CheckoutView.jsx";
+import SuccessView from "./components/SuccessView.jsx";
+import { supabase } from "./lib/supabase.js";
 
 const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:4000";
 const TELLER_APP_ID = import.meta.env.VITE_TELLER_APP_ID;
@@ -104,7 +108,15 @@ function calculateTotals(items) {
 function viewFromPath() {
   const path = window.location.pathname.toLowerCase();
   if (path.includes("/demo/logs")) return "logs";
+  if (path === "/pay" || path.startsWith("/pay/")) return "checkout";
+  if (path === "/customer" || path.startsWith("/customer/")) return "checkout";
   return "merchant";
+}
+
+function getPaymentTokenFromPath() {
+  const path = window.location.pathname;
+  const match = path.match(/^\/(?:pay|customer)\/([^/?#]+)/);
+  return match ? match[1] : null;
 }
 
 function App() {
@@ -125,6 +137,7 @@ function App() {
   const [presetItems, setPresetItems] = useState(PRESET_ITEMS);
   const [view, setView] = useState(viewFromPath()); // "checkout" | "merchant"
   const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [authLoading, setAuthLoading] = useState(!!supabase);
   const [paymentsLoading, setPaymentsLoading] = useState(false);
   const [paymentsError, setPaymentsError] = useState("");
   const [toast, setToast] = useState({ message: "", type: "" });
@@ -146,6 +159,8 @@ function App() {
   });
   const [newItem, setNewItem] = useState({ name: "", price: "", quantity: 1 });
   const [customerLinkPayment, setCustomerLinkPayment] = useState(null);
+  const [linkExpired, setLinkExpired] = useState(false);
+  const [linkLoading, setLinkLoading] = useState(false);
   const [employees, setEmployees] = useState([
     {
       id: "EMP-001",
@@ -200,6 +215,33 @@ function App() {
     const handlePop = () => setView(viewFromPath());
     window.addEventListener("popstate", handlePop);
     return () => window.removeEventListener("popstate", handlePop);
+  }, []);
+
+  // Supabase auth: check session on load and listen for changes
+  useEffect(() => {
+    if (!supabase) {
+      setAuthLoading(false);
+      return;
+    }
+
+    const initAuth = async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        setIsLoggedIn(!!session);
+      } catch (err) {
+        console.error("Auth session check failed:", err);
+      } finally {
+        setAuthLoading(false);
+      }
+    };
+
+    initAuth();
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setIsLoggedIn(!!session);
+    });
+
+    return () => subscription?.unsubscribe();
   }, []);
 
   const showToast = (
@@ -860,6 +902,7 @@ function App() {
       status: "PENDING",
       bank: merchantBank.bank === "Not linked" ? "Unlinked" : merchantBank.bank,
       note: note,
+      items: [...items],
     };
 
     setMerchantPayments((prev) => [payment, ...prev]);
@@ -868,42 +911,62 @@ function App() {
     showToast("QR generated for new payment", "success");
   };
 
-  const handleGenerateQr = (payment) => {
+  const createPaymentLink = async (payment) => {
+    if (!payment?.id || !payment?.amount) return null;
+    const baseUrl = window.location.origin.includes("localhost")
+      ? window.location.origin
+      : "https://demo.shesha";
+    const res = await fetch(`${API_BASE}/api/payment-links`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        orderId: payment.id,
+        amount: payment.amount,
+        currency: payment.currency || "ZAR",
+        note: payment.note || "",
+        items: payment.items || [],
+        merchantName: "Sunrise Salon",
+        baseUrl, // Let backend override if needed; backend uses FRONTEND_BASE_URL
+      }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || "Failed to create payment link");
+    }
+    const data = await res.json();
+    return data.url || (data.token ? `${baseUrl}/pay/${data.token}` : null);
+  };
+
+  const handleGenerateQr = async (payment) => {
     if (!payment) return;
-    const orderId = payment.id;
-    const isoRef = `SHESHA-${orderId}`;
-    // Include items array in URL if available
-    const itemsParam = payment.items ? `&items=${encodeURIComponent(JSON.stringify(payment.items))}` : '';
-    const paymentLink = `${window.location.origin}/customer?orderId=${encodeURIComponent(
-      orderId
-    )}&amount=${encodeURIComponent(payment.amount)}&note=${encodeURIComponent(
-      payment.note || ""
-    )}&iso_ref=${encodeURIComponent(isoRef)}${itemsParam}`;
-    const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(
-      paymentLink
-    )}`;
-    setQrPreview({ id: payment.id, url: qrUrl, open: true, payment });
+    try {
+      const paymentLink = await createPaymentLink(payment);
+      if (!paymentLink) {
+        showToast("Failed to create payment link", "error");
+        return;
+      }
+      const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(paymentLink)}`;
+      setQrPreview({ id: payment.id, url: qrUrl, open: true, payment });
+    } catch (err) {
+      console.error("Failed to create payment link", err);
+      showToast(err.message || "Failed to create payment link", "error");
+    }
   };
 
   const handleCopyCheckoutLink = async (payment) => {
     if (!payment) return;
-    const orderId = payment.id;
-    const isoRef = `SHESHA-${orderId}`;
-    // Include items array in URL if available
-    const itemsParam = payment.items ? `&items=${encodeURIComponent(JSON.stringify(payment.items))}` : '';
-    // Use demo domain format for demo purposes, but use current origin for localhost
-    const baseUrl = window.location.origin.includes('localhost') 
-      ? window.location.origin 
-      : 'https://demo.shesha';
-    // Use /pay path as requested, but fallback to /customer for localhost compatibility
-    const path = window.location.origin.includes('localhost') ? '/customer' : '/pay';
-    // Use 'order' parameter as requested for demo format
-    const checkoutLink = `${baseUrl}${path}?order=${encodeURIComponent(
-      orderId
-    )}&amount=${encodeURIComponent(payment.amount)}&note=${encodeURIComponent(
-      payment.note || ""
-    )}&iso_ref=${encodeURIComponent(isoRef)}${itemsParam}`;
-    
+    let checkoutLink;
+    try {
+      checkoutLink = await createPaymentLink(payment);
+      if (!checkoutLink) {
+        showToast("Failed to create checkout link", "error");
+        return;
+      }
+    } catch (err) {
+      console.error("Failed to create checkout link", err);
+      showToast(err.message || "Failed to create checkout link", "error");
+      return;
+    }
     try {
       await navigator.clipboard.writeText(checkoutLink);
       showToast("Checkout link copied to clipboard!", "success");
@@ -1087,19 +1150,56 @@ function App() {
     }
   };
 
-  // Parse payment link in customer view
+  // Fetch payment data from token or parse legacy query params (customer view)
   useEffect(() => {
     if (view !== "checkout") return;
+
+    const token = getPaymentTokenFromPath();
+
+    if (token) {
+      // Secure deep link: fetch from API
+      setLinkLoading(true);
+      setLinkExpired(false);
+      setCustomerLinkPayment(null);
+
+      fetch(`${API_BASE}/api/pay/${token}`)
+        .then((res) => {
+          if (!res.ok) {
+            setLinkExpired(true);
+            setCustomerLinkPayment(null);
+            return;
+          }
+          return res.json();
+        })
+        .then((data) => {
+          if (data) {
+            setCustomerLinkPayment({
+              orderId: data.orderId,
+              amount: data.amount,
+              note: data.note || "",
+              isoRef: data.isoRef || (data.orderId ? `SHESHA-${data.orderId}` : null),
+              items: data.items || [],
+            });
+            setLinkExpired(false);
+          }
+        })
+        .catch(() => {
+          setLinkExpired(true);
+          setCustomerLinkPayment(null);
+        })
+        .finally(() => setLinkLoading(false));
+      return;
+    }
+
+    // Legacy: parse query params (backward compatibility)
     const params = new URLSearchParams(window.location.search);
     const amountParam = params.get("amount");
-    // Support both 'order' and 'orderId' for compatibility
     const orderIdParam = params.get("order") || params.get("orderId");
     const noteParam = params.get("note");
     const isoRefParam = params.get("iso_ref");
     const itemsParam = params.get("items");
     const parsedAmount = amountParam ? Number(amountParam) : null;
 
-    // Parse items array if available
     let parsedItems = null;
     if (itemsParam) {
       try {
@@ -1110,12 +1210,13 @@ function App() {
     }
 
     if (parsedAmount || orderIdParam || noteParam || isoRefParam || parsedItems) {
+      setLinkExpired(false);
       setCustomerLinkPayment({
         amount: parsedAmount || ORDER_TOTAL,
         orderId: orderIdParam || `ORD-${Date.now()}`,
         note: noteParam || "",
         isoRef: isoRefParam || (orderIdParam ? `SHESHA-${orderIdParam}` : null),
-        items: parsedItems, // Store items array separately
+        items: parsedItems || [],
       });
     }
   }, [view]);
@@ -1167,18 +1268,103 @@ function App() {
     );
   }
 
+  if (view === "checkout") {
+    return (
+      <>
+        <PhoneFrame>
+          {linkLoading ? (
+            <div className="app landing" style={{ display: "flex", justifyContent: "center", alignItems: "center", minHeight: "200px" }}>
+              <p className="processing">Loading payment...</p>
+            </div>
+          ) : linkExpired ? (
+            <div className="app landing" style={{ padding: "24px", textAlign: "center" }}>
+              <h1>Link expired or invalid</h1>
+              <p style={{ marginTop: "12px", color: "var(--text-secondary)" }}>
+                This payment link is no longer valid. Please contact the merchant for a new link.
+              </p>
+            </div>
+          ) : paymentStatus === "success" ? (
+            <SuccessView
+              currencySymbol={CURRENCY_SYMBOL}
+              currentLinkAmount={currentLinkAmount}
+              currentLinkOrderId={currentLinkOrderId}
+              customerLinkPayment={customerLinkPayment}
+              linkedBank={linkedBank}
+              bankDetails={bankDetails}
+              paidAt={paidAt}
+              receiptPhone={receiptPhone}
+              receiptStatus={receiptStatus}
+              onReceiptPhoneChange={setReceiptPhone}
+              onSendReceipt={handleSendReceipt}
+              onGoBack={handleGoBackFromSuccess}
+            />
+          ) : (
+            <CheckoutView
+              items={items}
+              customerLinkPayment={customerLinkPayment}
+              currentLinkAmount={currentLinkAmount}
+              paymentIntent={paymentIntent}
+              paymentStatus={paymentStatus}
+              tellerError={tellerError}
+              linkedBank={linkedBank}
+              bankDetails={bankDetails}
+              onConnectBank={handleDevTestPayClick}
+              onConfirmPayment={handleConfirmPayment}
+              onCancel={handleCancel}
+              onSettleByOrderId={handleSettleByOrderId}
+              onBankLinked={handleBankLinked}
+              currencySymbol={CURRENCY_SYMBOL}
+              tax={tax}
+              subtotal={subtotal}
+              total={total}
+            />
+          )}
+        </PhoneFrame>
+        <Toast
+          message={toast.message}
+          type={toast.type}
+          actionLabel={toast.actionLabel}
+          onAction={toast.onAction}
+        />
+      </>
+    );
+  }
+
   const handleLogin = () => {
     setIsLoggedIn(true);
     setView("merchant");
     window.history.pushState({}, "", "/");
   };
 
+  const handleLoginError = (message) => {
+    setLoginError(message);
+    showToast(message, "error", 4000);
+  };
+
+  const handleLogout = async () => {
+    if (supabase) {
+      await supabase.auth.signOut();
+    }
+    setIsLoggedIn(false);
+  };
+
   if (view === "merchant") {
+    // Show loading while checking auth
+    if (authLoading) {
+      return (
+        <TabletFrame>
+          <div style={{ display: "flex", justifyContent: "center", alignItems: "center", height: "100%", color: "var(--text-secondary)" }}>
+            Loading…
+          </div>
+        </TabletFrame>
+      );
+    }
+
     // Show login screen if not logged in
     if (!isLoggedIn) {
       return (
         <TabletFrame>
-          <LoginScreen onLogin={handleLogin} />
+          <LoginScreen onLogin={handleLogin} onError={handleLoginError} />
         </TabletFrame>
       );
     }
@@ -1233,6 +1419,7 @@ function App() {
           employeesError={employeesError}
           onAddEmployee={handleAddEmployee}
           onDeleteEmployee={handleDeleteEmployee}
+          onLogout={supabase ? handleLogout : undefined}
         />
         </TabletFrame>
         <Toast
