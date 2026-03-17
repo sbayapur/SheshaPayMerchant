@@ -4,15 +4,26 @@ import morgan from "morgan";
 import rateLimit from "express-rate-limit";
 import { randomUUID, randomBytes } from "crypto";
 import { startPayment } from "./paymentsProvider.js";
-import { exchangeTellerToken } from "./tellerProvider.js";
 import { warmUpToken, hasStitchConfig } from "./stitchClient.js";
 
 const app = express();
 const port = process.env.PORT || 4000;
 
 // CORS: restrict to FRONTEND_BASE_URL in production; allow all when unset (local dev)
-const corsOrigin = process.env.FRONTEND_BASE_URL || true;
-app.use(cors({ origin: corsOrigin }));
+// Support origin with or without trailing slash (browsers may send either)
+// Return normalized origin (no trailing slash) to avoid CORS header mismatch
+const allowedOrigin = (process.env.FRONTEND_BASE_URL || "").trim().replace(/\/$/, "") || true;
+const normOrigin = (url) => (url || "").trim().replace(/\/$/, "");
+const corsOptions = typeof allowedOrigin === "string"
+  ? { origin: (origin, cb) => {
+      if (!origin || !allowedOrigin) return cb(null, true);
+      if (normOrigin(origin) === normOrigin(allowedOrigin)) {
+        return cb(null, origin);
+      }
+      cb(null, false);
+    } }
+  : { origin: true };
+app.use(cors(corsOptions));
 app.use(express.json());
 app.use(morgan("dev"));
 
@@ -881,42 +892,6 @@ app.post("/webhooks/payshap", async (req, res) => {
       error: err.message || "Failed to process PayShap webhook",
       acknowledged: true
     });
-  }
-});
-
-app.post("/api/payment-intents/:id/teller-enrollment", async (req, res) => {
-  const { tellerToken, startPayment: shouldStartPayment = false } = req.body || {};
-  if (!tellerToken) {
-    return res.status(400).json({ error: "tellerToken is required" });
-  }
-
-  const intent = paymentIntents.get(req.params.id);
-  if (!intent) {
-    return res.status(404).json({ error: "not found" });
-  }
-
-  try {
-    const tellerEnrollment = await exchangeTellerToken(tellerToken);
-    const updatedIntent = {
-      ...intent,
-      tellerEnrollment,
-      updatedAt: new Date().toISOString(),
-    };
-
-    let redirectUrl = null;
-    if (shouldStartPayment) {
-      const providerResponse = await startPayment(updatedIntent);
-      redirectUrl = providerResponse?.redirectUrl || null;
-      updatedIntent.redirectUrl = redirectUrl;
-      updatedIntent.status = redirectUrl ? "requires_action" : intent.status;
-      updatedIntent.startedAt = new Date().toISOString();
-    }
-
-    paymentIntents.set(intent.id, updatedIntent);
-    res.json({ intent: updatedIntent, redirectUrl });
-  } catch (err) {
-    console.error("Failed to attach Teller enrollment", err);
-    res.status(500).json({ error: "could not attach teller enrollment" });
   }
 });
 

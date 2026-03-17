@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
+import { getApiBase } from "../lib/api.js";
 import ReceiptItemsCard from "./ReceiptItemsCard.jsx";
 import PaymentsTable from "./PaymentsTable.jsx";
 import EmployeesView from "./EmployeesView.jsx";
@@ -42,7 +43,7 @@ function MerchantDashboard({
   onDeleteEmployee,
   onLogout,
 }) {
-  const API_BASE = import.meta.env?.VITE_API_BASE || "http://localhost:4000";
+  const API_BASE = getApiBase();
   const baseUrl = window.location.origin.includes("localhost")
     ? window.location.origin
     : "https://demo.shesha";
@@ -468,7 +469,7 @@ function MerchantDashboard({
     // Create payment intent on backend so status can be tracked
     let paymentIntentId = null;
     try {
-      const apiBase = import.meta.env.VITE_API_BASE || "http://localhost:4000";
+      const apiBase = API_BASE;
       const piRes = await fetch(`${apiBase}/api/payment-intents`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -493,7 +494,7 @@ function MerchantDashboard({
       const checkoutLink = await createPaymentLinkUrl(paymentToAdd);
       if (checkoutLink) {
         try {
-          const apiBase = import.meta.env.VITE_API_BASE || "http://localhost:4000";
+          const apiBase = API_BASE;
           await fetch(`${apiBase}/api/invoices`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -544,7 +545,7 @@ function MerchantDashboard({
     // Create payment intent on backend so status can be tracked
     let paymentIntentId = null;
     try {
-      const apiBase = import.meta.env.VITE_API_BASE || "http://localhost:4000";
+      const apiBase = API_BASE;
       const piRes = await fetch(`${apiBase}/api/payment-intents`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -568,7 +569,7 @@ function MerchantDashboard({
 
     if (checkoutLink) {
       try {
-        const apiBase = import.meta.env.VITE_API_BASE || "http://localhost:4000";
+        const apiBase = API_BASE;
         await fetch(`${apiBase}/api/invoices`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },

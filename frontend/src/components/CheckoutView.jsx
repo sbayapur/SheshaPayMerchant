@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { getApiBase } from "../lib/api.js";
 
 function CheckoutView({
   items,
@@ -6,7 +7,7 @@ function CheckoutView({
   currentLinkAmount,
   paymentIntent,
   paymentStatus,
-  tellerError,
+  bankError,
   linkedBank,
   bankDetails,
   onConnectBank,
@@ -111,7 +112,7 @@ function CheckoutView({
       const paymentIntentId = paymentIntent?.id || orderId; // Fallback to orderId if paymentIntent.id not available
       
       if (orderId) {
-        const apiBase = import.meta.env.VITE_API_BASE || "http://localhost:4000";
+        const apiBase = getApiBase();
         fetch(`${apiBase}/api/demo/authorize`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -157,7 +158,7 @@ function CheckoutView({
       // Authorise the payment (after bank auth) using demo authorize endpoint
       const orderId = customerLinkPayment?.orderId || paymentIntent?.id;
       if (orderId && paymentIntent?.id) {
-        const apiBase = import.meta.env.VITE_API_BASE || "http://localhost:4000";
+        const apiBase = getApiBase();
         fetch(`${apiBase}/api/demo/authorize`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -395,10 +396,10 @@ function CheckoutView({
         {paymentStatus === "success" && (
           <p className="success">Payment received!</p>
         )}
-        {tellerError && (
-          <p className="error">{tellerError}</p>
+        {bankError && (
+          <p className="error">{bankError}</p>
         )}
-        {paymentStatus === "error" && !tellerError && (
+        {paymentStatus === "error" && !bankError && (
           <p className="error">Something went wrong. Please try again.</p>
         )}
       </div>

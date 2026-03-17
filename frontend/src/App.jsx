@@ -8,11 +8,9 @@ import LoginScreen from "./components/LoginScreen.jsx";
 import CheckoutView from "./components/CheckoutView.jsx";
 import SuccessView from "./components/SuccessView.jsx";
 import { supabase } from "./lib/supabase.js";
+import { getApiBase } from "./lib/api.js";
 
-const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:4000";
-const TELLER_APP_ID = import.meta.env.VITE_TELLER_APP_ID;
-const TELLER_ENVIRONMENT =
-  import.meta.env.VITE_TELLER_ENVIRONMENT || "sandbox";
+const API_BASE = getApiBase();
 const ORDER_TOTAL = 75;
 const CURRENCY_SYMBOL = "R";
 
@@ -44,8 +42,7 @@ function getPaymentTokenFromPath() {
 function App() {
   const [paymentIntent, setPaymentIntent] = useState(null);
   const [paymentStatus, setPaymentStatus] = useState("idle");
-  const [tellerReady, setTellerReady] = useState(false);
-  const [tellerError, setTellerError] = useState("");
+  const [bankError, setBankError] = useState("");
   const [linkedBank, setLinkedBank] = useState("");
   const [bankDetails, setBankDetails] = useState({
     accountName: "",
@@ -154,19 +151,7 @@ function App() {
     }
   };
 
-  // Load Teller script
-  useEffect(() => {
-    const script = document.createElement("script");
-    script.src = "https://cdn.teller.io/connect/connect.js";
-    script.async = true;
-    script.onload = () => setTellerReady(true);
-    script.onerror = () => setTellerError("Could not load Teller Connect.");
-    document.body.appendChild(script);
-
-    return () => document.body.removeChild(script);
-  }, []);
-
-  // Create mock payment intent on mount or when link params change
+  // Create payment intent on mount or when link params change
   // Only create once per checkout session - don't recreate when items/total change
   useEffect(() => {
     // Don't create if we're not on the checkout view
@@ -210,15 +195,15 @@ function App() {
         const data = await res.json();
         setPaymentIntent(data);
         setPaymentStatus("ready");
-        setTellerError(""); // Clear any previous errors
+        setBankError(""); // Clear any previous errors
       } catch (err) {
         console.error("Failed to create payment intent:", err);
         setPaymentStatus("error");
         // Provide helpful error message
         if (err.message?.includes("fetch") || err.message?.includes("Failed to fetch")) {
-          setTellerError("Cannot connect to server. Please make sure the backend server is running on port 4000.");
+          setBankError("Cannot connect to server. Please make sure the backend server is running on port 4000.");
         } else {
-          setTellerError(err.message || "Failed to create payment intent. Please try again.");
+          setBankError(err.message || "Failed to create payment intent. Please try again.");
         }
       }
     };
@@ -412,81 +397,22 @@ function App() {
     };
   }, [view]); // Re-attach listener if view changes
 
-  const handleDevTestPayClick = () => {
-    setTellerError(""); // Clear any previous errors
+  const handleConnectBank = () => {
+    setBankError("");
 
     if (!paymentIntent) {
-      setTellerError("Payment intent not ready. Please wait a moment and try again.");
+      setBankError("Payment intent not ready. Please wait a moment and try again.");
       return;
     }
 
-    // If Teller is not configured or not ready, use mock flow for demo
-    if (!TELLER_APP_ID || !tellerReady || !window.TellerConnect) {
-      // Mock bank connection for demo purposes
-      setLinkedBank("Mock Bank");
-      setBankDetails({
-        accountName: "Demo Account",
-        accountType: "Checking",
-        accountLast4: "4242",
-      });
-      setPaymentStatus("confirm");
-      setTellerError(""); // Clear any errors
-      return;
-    }
-
-    try {
-      const connect = window.TellerConnect.setup({
-        applicationId: TELLER_APP_ID,
-        environment: TELLER_ENVIRONMENT,
-
-        onSuccess: async (enrollment) => {
-          const primaryAccount = enrollment?.accounts?.[0] || {};
-          const inferredBank =
-            enrollment?.institution?.name ||
-            primaryAccount?.institution?.name ||
-            "Linked bank";
-          const last4 =
-            primaryAccount?.last_four ||
-            primaryAccount?.last4 ||
-            primaryAccount?.mask ||
-            (primaryAccount?.account_number &&
-              primaryAccount.account_number.slice(-4)) ||
-            "";
-
-          setLinkedBank(inferredBank);
-          setBankDetails({
-            accountName: primaryAccount?.name || "Connected account",
-            accountType: primaryAccount?.type || "Bank account",
-            accountLast4: last4,
-          });
-          setPaymentStatus("confirm");
-          setTellerError(""); // Clear any errors on success
-        },
-
-        onExit: () => {
-          console.log("Teller closed");
-          // Don't set error on exit, user might have just closed it
-        },
-
-        onError: (error) => {
-          console.error("Teller Connect error:", error);
-          setTellerError(error?.message || "An error occurred connecting to your bank. Please try again.");
-        },
-      });
-
-      connect.open();
-    } catch (error) {
-      console.error("Error setting up Teller Connect:", error);
-      // Fallback to mock flow if Teller setup fails
-      setLinkedBank("Mock Bank");
-      setBankDetails({
-        accountName: "Demo Account",
-        accountType: "Checking",
-        accountLast4: "4242",
-      });
-      setPaymentStatus("confirm");
-      setTellerError("");
-    }
+    // Mock bank connection for demo (Stitch/PayShap handles real bank linking)
+    setLinkedBank("Mock Bank");
+    setBankDetails({
+      accountName: "Demo Account",
+      accountType: "Checking",
+      accountLast4: "4242",
+    });
+    setPaymentStatus("confirm");
   };
 
   const handleConfirmPayment = async () => {
@@ -537,12 +463,12 @@ function App() {
     }
 
     if (!intentToUse) {
-      setTellerError("Payment intent not found. Please try again.");
+      setBankError("Payment intent not found. Please try again.");
       return;
     }
 
     setPaymentStatus("pending");
-    setTellerError("");
+    setBankError("");
 
     try {
       const res = await fetch(
@@ -637,7 +563,7 @@ function App() {
       accountType: "",
       accountLast4: "",
     });
-    setTellerError("");
+    setBankError("");
     setReceiptStatus("");
     setReceiptPhone("");
   };
@@ -655,7 +581,7 @@ function App() {
       accountType: "",
       accountLast4: "",
     });
-    setTellerError("");
+    setBankError("");
     setReceiptStatus("");
     // Don't reset receiptPhone - keep it for the receipt form
   };
@@ -664,7 +590,7 @@ function App() {
     setLinkedBank(bankName);
     setBankDetails(bankDetailsData);
     setPaymentStatus("confirm");
-    setTellerError(""); // Clear any errors
+    setBankError(""); // Clear any errors
     // Scroll to top when confirm panel appears
     setTimeout(() => {
       const phoneContent = document.querySelector('.phone-content');
@@ -1174,10 +1100,10 @@ function App() {
               currentLinkAmount={currentLinkAmount}
               paymentIntent={paymentIntent}
               paymentStatus={paymentStatus}
-              tellerError={tellerError}
+              bankError={bankError}
               linkedBank={linkedBank}
               bankDetails={bankDetails}
-              onConnectBank={handleDevTestPayClick}
+              onConnectBank={handleConnectBank}
               onConfirmPayment={handleConfirmPayment}
               onCancel={handleCancel}
               onSettleByOrderId={handleSettleByOrderId}
@@ -1205,7 +1131,6 @@ function App() {
   };
 
   const handleLoginError = (message) => {
-    setLoginError(message);
     showToast(message, "error", 4000);
   };
 
