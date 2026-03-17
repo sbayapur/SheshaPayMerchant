@@ -28,7 +28,6 @@ function MerchantDashboard({
   onAddPayment,
   statusLabel,
   statusClass,
-  onLoadDemoPayments,
   onRefreshPayments,
   onGenerateQr,
   onSettlePayment,
@@ -973,6 +972,7 @@ function MerchantDashboard({
                   />
                 </div>
                 <div className="receipt-dashboard-right">
+                  {presetItems.length > 0 && (
                   <div className="quick-add-panel">
                     <h2 className="merchant-name">Quick Add</h2>
                     <div className="quick-add-buttons">
@@ -993,6 +993,7 @@ function MerchantDashboard({
                       ))}
                     </div>
                   </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -1001,7 +1002,6 @@ function MerchantDashboard({
               payments={merchantPayments}
               loading={paymentsLoading}
               error={paymentsError}
-              onLoadDemo={onLoadDemoPayments}
               onRefresh={onRefreshPayments}
               currencySymbol={currencySymbol}
               statusLabel={statusLabel}

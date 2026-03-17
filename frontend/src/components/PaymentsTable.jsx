@@ -2,7 +2,6 @@ function PaymentsTable({
   payments,
   loading,
   error,
-  onLoadDemo,
   onRefresh,
   currencySymbol,
   statusLabel,

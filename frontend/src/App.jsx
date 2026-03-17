@@ -5,7 +5,6 @@ import Toast from "./components/Toast.jsx";
 import LogsView from "./components/LogsView.jsx";
 import TabletFrame from "./components/TabletFrame.jsx";
 import LoginScreen from "./components/LoginScreen.jsx";
-import PhoneFrame from "./components/PhoneFrame.jsx";
 import CheckoutView from "./components/CheckoutView.jsx";
 import SuccessView from "./components/SuccessView.jsx";
 import { supabase } from "./lib/supabase.js";
@@ -16,83 +15,6 @@ const TELLER_ENVIRONMENT =
   import.meta.env.VITE_TELLER_ENVIRONMENT || "sandbox";
 const ORDER_TOTAL = 75;
 const CURRENCY_SYMBOL = "R";
-const PRESET_ITEMS = [
-  { name: "Curly Haircut", price: 200, quantity: 1 },
-  { name: "Wash and Style", price: 150, quantity: 1 },
-];
-
-// Generate realistic mock payments for a small salon business
-// 57 settled + 3 pending = 60 payments
-const MOCK_PAYMENTS = (() => {
-  const _now = Date.now();
-  const DAY = 24 * 60 * 60 * 1000;
-  const HOUR = 60 * 60 * 1000;
-
-  const services = [
-    { desc: "Trim", amount: 115 },
-    { desc: "Wash and Style", amount: 172.50 },
-    { desc: "Curly Haircut", amount: 230 },
-    { desc: "Trim + Wash and Style", amount: 287.50 },
-    { desc: "Curly Haircut + Wash and Style", amount: 402.50 },
-  ];
-
-  // Service mix for 50 settled payments: 29 Trim, 14 Wash, 5 Curly, 2 Trim+Wash = R7,475
-  const settledPattern = [
-    0, 1, 0, 0, 2, 0, 1, 0, 3, 0,
-    1, 0, 0, 1, 0, 2, 0, 1, 0, 0,
-    0, 1, 0, 0, 1, 0, 2, 0, 1, 0,
-    0, 0, 1, 0, 3, 0, 1, 0, 2, 1,
-    0, 1, 0, 0, 1, 0, 2, 0, 0, 1,
-  ];
-
-  const payments = [];
-
-  // 50 settled payments spread over ~45 days
-  settledPattern.forEach((svcIdx, i) => {
-    const svc = services[svcIdx];
-    const daysAgo = 0.1 + (i * 45) / 49; // spread from ~2.4h ago to 45 days ago
-    const created = new Date(_now - daysAgo * DAY);
-    payments.push({
-      id: `ORD-${1001 + i}`,
-      orderId: `ORD-${1001 + i}`,
-      amount: svc.amount,
-      currency: "ZAR",
-      status: "SETTLED",
-      description: svc.desc,
-      note: svc.desc,
-      createdAt: created.toISOString(),
-      settlementTime: new Date(created.getTime() + 5 * 60 * 1000).toISOString(),
-      settlementProvider: "PayShap",
-      settlementRef: `SHESHA-ORD-${1001 + i}`,
-    });
-  });
-
-  // 10 more recent payments — all completed except the very last (most recent) one
-  const recentPattern = [0, 1, 2, 3, 0, 1, 2, 0, 1, 0];
-  recentPattern.forEach((svcIdx, i) => {
-    const svc = services[svcIdx];
-    const hoursAgo = 0.25 + i * 7; // spread from 15 min to ~2.9 days ago
-    const created = new Date(_now - hoursAgo * HOUR);
-    const isLast = i < 3; // 3 most recent payments stay pending
-    payments.push({
-      id: `ORD-${2001 + i}`,
-      orderId: `ORD-${2001 + i}`,
-      amount: svc.amount,
-      currency: "ZAR",
-      status: isLast ? "PENDING" : "SETTLED",
-      description: svc.desc,
-      note: svc.desc,
-      createdAt: created.toISOString(),
-      ...(isLast ? {} : {
-        settlementTime: new Date(created.getTime() + 5 * 60 * 1000).toISOString(),
-        settlementProvider: "PayShap",
-        settlementRef: `SHESHA-ORD-${2001 + i}`,
-      }),
-    });
-  });
-
-  return payments.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-})();
 
 function calculateTotals(items) {
   const subtotal = items.reduce(
@@ -134,7 +56,7 @@ function App() {
   const [receiptStatus, setReceiptStatus] = useState("");
   const [paidAt, setPaidAt] = useState(null);
   const [items, setItems] = useState([]);
-  const [presetItems, setPresetItems] = useState(PRESET_ITEMS);
+  const [presetItems, setPresetItems] = useState([]);
   const [view, setView] = useState(viewFromPath()); // "checkout" | "merchant"
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [authLoading, setAuthLoading] = useState(!!supabase);
@@ -142,8 +64,8 @@ function App() {
   const [paymentsError, setPaymentsError] = useState("");
   const [toast, setToast] = useState({ message: "", type: "" });
   const [merchantBank, setMerchantBank] = useState({
-    bank: "First National Bank (FNB)",
-    account: "1234",
+    bank: "Not linked",
+    account: "",
   });
   const [qrPreview, setQrPreview] = useState({
     id: "",
@@ -151,7 +73,7 @@ function App() {
     open: false,
     payment: null, // Store payment data for generating checkout link
   });
-  const [merchantPayments, setMerchantPayments] = useState(MOCK_PAYMENTS);
+  const [merchantPayments, setMerchantPayments] = useState([]);
   const [newPayment, setNewPayment] = useState({
     amount: "",
     note: "",
@@ -161,35 +83,7 @@ function App() {
   const [customerLinkPayment, setCustomerLinkPayment] = useState(null);
   const [linkExpired, setLinkExpired] = useState(false);
   const [linkLoading, setLinkLoading] = useState(false);
-  const [employees, setEmployees] = useState([
-    {
-      id: "EMP-001",
-      name: "Thandi Mokoena",
-      phoneNumber: "+27 82 345 6789",
-      bankName: "Capitec Bank",
-      accountHolderName: "Thandi Mokoena",
-      bankAccountNumber: "1234567890",
-      createdAt: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(),
-    },
-    {
-      id: "EMP-002",
-      name: "Lerato Nkosi",
-      phoneNumber: "+27 71 987 6543",
-      bankName: "FNB",
-      accountHolderName: "Lerato Nkosi",
-      bankAccountNumber: "9876543210",
-      createdAt: new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString(),
-    },
-    {
-      id: "EMP-003",
-      name: "Sipho Dlamini",
-      phoneNumber: "+27 63 456 7890",
-      bankName: "Standard Bank",
-      accountHolderName: "Sipho Dlamini",
-      bankAccountNumber: "5678901234",
-      createdAt: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
-    },
-  ]);
+  const [employees, setEmployees] = useState([]);
   const [employeesLoading, setEmployeesLoading] = useState(false);
   const [employeesError, setEmployeesError] = useState("");
 
@@ -997,30 +891,6 @@ function App() {
     }
   };
 
-  const handleLoadDemoPayments = () => {
-    const demoRows = [
-      {
-        id: "DEMO-001",
-        amount: 120,
-        currency: "ZAR",
-        status: "succeeded",
-        description: "Demo croissant + coffee",
-        createdAt: new Date(Date.now() - 1000 * 60 * 5).toISOString(),
-      },
-      {
-        id: "DEMO-002",
-        amount: 85,
-        currency: "ZAR",
-        status: "requires_action",
-        description: "Demo payment pending",
-        createdAt: new Date(Date.now() - 1000 * 60 * 30).toISOString(),
-      },
-    ];
-    setMerchantPayments(demoRows);
-    setPaymentsError("");
-    showToast("Loaded demo payments", "success");
-  };
-
   const handleClearPayments = async () => {
     setPaymentsLoading(true);
     setPaymentsError("");
@@ -1271,8 +1141,7 @@ function App() {
   if (view === "checkout") {
     return (
       <>
-        <PhoneFrame>
-          {linkLoading ? (
+        {linkLoading ? (
             <div className="app landing" style={{ display: "flex", justifyContent: "center", alignItems: "center", minHeight: "200px" }}>
               <p className="processing">Loading payment...</p>
             </div>
@@ -1319,7 +1188,6 @@ function App() {
               total={total}
             />
           )}
-        </PhoneFrame>
         <Toast
           message={toast.message}
           type={toast.type}
@@ -1406,7 +1274,6 @@ function App() {
           }}
           statusLabel={statusLabel}
           statusClass={statusClass}
-          onLoadDemoPayments={handleLoadDemoPayments}
           onRefreshPayments={handleClearPayments}
           onGenerateQr={handleGenerateQr}
           onSettlePayment={handleSettlePayment}

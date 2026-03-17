@@ -10,7 +10,9 @@ import { warmUpToken, hasStitchConfig } from "./stitchClient.js";
 const app = express();
 const port = process.env.PORT || 4000;
 
-app.use(cors());
+// CORS: restrict to FRONTEND_BASE_URL in production; allow all when unset (local dev)
+const corsOrigin = process.env.FRONTEND_BASE_URL || true;
+app.use(cors({ origin: corsOrigin }));
 app.use(express.json());
 app.use(morgan("dev"));
 
