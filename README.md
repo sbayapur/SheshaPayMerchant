@@ -77,12 +77,6 @@ To avoid CORS and network errors:
 | **Amplify** | `VITE_API_BASE` | `https://xxx.awsapprunner.com` | No trailing `/`, `?`, or `&` |
 | **Amplify** | `VITE_SUPABASE_URL` | Your Supabase project URL | Required for login |
 | **Amplify** | `VITE_SUPABASE_ANON_KEY` | Your Supabase anon key | Required for login |
-| **App Runner** | `FRONTEND_BASE_URL` | `https://main.xxx.amplifyapp.com` | Exact Amplify app URL (CORS allows this origin) |
-
-If you see "CORS header does not match" or "Failed to fetch", ensure:
-1. `FRONTEND_BASE_URL` in App Runner matches your Amplify URL exactly.
-2. `VITE_API_BASE` in Amplify has no trailing characters.
-3. Redeploy both frontend and backend after changing env vars.
 
 ## Routes
 

@@ -2,22 +2,79 @@ import { useState } from "react";
 import { supabase } from "../lib/supabase.js";
 import "./LoginScreen.css";
 
+const PASSWORD_MIN_LENGTH = 8;
+const PASSWORD_REQUIREMENTS = [
+  { label: "At least 8 characters", test: (p) => p.length >= PASSWORD_MIN_LENGTH },
+  { label: "At least one letter", test: (p) => /[a-zA-Z]/.test(p) },
+  { label: "At least one number", test: (p) => /\d/.test(p) },
+];
+
+function mapAuthError(error, isSignUp) {
+  if (!error) return null;
+  const msg = (error.message || "").toLowerCase();
+  const code = error.code || "";
+  if (msg.includes("invalid login credentials") || msg.includes("invalid_credentials") || code === "invalid_credentials") {
+    return "Invalid email or password. Please check and try again.";
+  }
+  if (msg.includes("email not confirmed") || code === "email_not_confirmed") {
+    return "Please check your email and click the confirmation link to activate your account.";
+  }
+  if (msg.includes("user already registered") || msg.includes("already been registered") || code === "user_already_exists") {
+    return "An account with this email already exists. Try signing in instead.";
+  }
+  if (msg.includes("password") && (msg.includes("weak") || msg.includes("short"))) {
+    return "Password must be at least 8 characters, with a letter and a number.";
+  }
+  if (msg.includes("invalid email") || msg.includes("valid email")) {
+    return "Please enter a valid email address.";
+  }
+  if (msg.includes("too many requests") || code === "rate_limit_exceeded") {
+    return "Too many attempts. Please wait a moment and try again.";
+  }
+  if (msg.includes("network") || msg.includes("fetch")) {
+    return "Connection error. Please check your internet and try again.";
+  }
+  return error.message || (isSignUp ? "Sign up failed. Please try again." : "Sign in failed. Please try again.");
+}
+
+function validateSignUp(email, password, confirmPassword) {
+  if (!email.trim()) return "Enter your email address.";
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(email.trim())) return "Enter a valid email address.";
+  if (PASSWORD_REQUIREMENTS.some((r) => !r.test(password))) {
+    return "Password must be at least 8 characters, with a letter and a number.";
+  }
+  if (password !== confirmPassword) return "Passwords do not match.";
+  return null;
+}
+
 function LoginScreen({ onLogin, onError }) {
   const [isSignUp, setIsSignUp] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [signUpSuccess, setSignUpSuccess] = useState(false);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!email.trim() || !password.trim()) {
+    if (!email.trim() || !password.trim()) return;
+    if (isSignUp && password !== confirmPassword) {
+      onError?.("Passwords do not match.");
       return;
     }
 
     if (!supabase) {
-      onError?.("Supabase is not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to .env");
+      onError?.("Supabase is not configured. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in Amplify environment variables.");
       return;
+    }
+
+    if (isSignUp) {
+      const validationError = validateSignUp(email, password, confirmPassword);
+      if (validationError) {
+        onError?.(validationError);
+        return;
+      }
     }
 
     setIsLoading(true);
@@ -25,19 +82,20 @@ function LoginScreen({ onLogin, onError }) {
 
     try {
       if (isSignUp) {
+        const redirectTo = window.location.origin + "/";
         const { data, error } = await supabase.auth.signUp({
           email: email.trim(),
           password,
-          options: { emailRedirectTo: window.location.origin },
+          options: { emailRedirectTo: redirectTo },
         });
 
         if (error) {
-          onError?.(error.message || "Sign up failed");
+          onError?.(mapAuthError(error, true) || "Sign up failed");
           return;
         }
 
         if (data?.user?.identities?.length === 0) {
-          onError?.("An account with this email already exists. Try signing in.");
+          onError?.("An account with this email already exists. Try signing in instead.");
           return;
         }
 
@@ -53,7 +111,7 @@ function LoginScreen({ onLogin, onError }) {
         });
 
         if (error) {
-          onError?.(error.message || "Invalid email or password");
+          onError?.(mapAuthError(error, false) || "Invalid email or password");
           return;
         }
 
@@ -62,7 +120,7 @@ function LoginScreen({ onLogin, onError }) {
         }
       }
     } catch (err) {
-      onError?.(err.message || (isSignUp ? "Sign up failed" : "Sign in failed"));
+      onError?.(mapAuthError(err, isSignUp) || err?.message || (isSignUp ? "Sign up failed" : "Sign in failed"));
     } finally {
       setIsLoading(false);
     }
@@ -71,7 +129,15 @@ function LoginScreen({ onLogin, onError }) {
   const switchMode = () => {
     setIsSignUp((prev) => !prev);
     setSignUpSuccess(false);
+    setConfirmPassword("");
   };
+
+  const signUpValid =
+    email.trim() &&
+    password.length >= PASSWORD_MIN_LENGTH &&
+    /[a-zA-Z]/.test(password) &&
+    /\d/.test(password) &&
+    password === confirmPassword;
 
   return (
     <div className="login-screen">
@@ -92,7 +158,9 @@ function LoginScreen({ onLogin, onError }) {
 
         {signUpSuccess ? (
           <div className="login-success">
-            <p>Check your email for a confirmation link to activate your account.</p>
+            <p className="login-success-icon">✉️</p>
+            <p>We sent a confirmation link to <strong>{email}</strong>.</p>
+            <p className="login-success-hint">Click the link in that email to activate your account, then come back here to sign in.</p>
             <button
               type="button"
               className="login-link"
@@ -112,7 +180,7 @@ function LoginScreen({ onLogin, onError }) {
                   id="email"
                   type="email"
                   className="login-input"
-                  placeholder="Enter your email"
+                  placeholder="you@example.com"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   disabled={isLoading}
@@ -128,19 +196,54 @@ function LoginScreen({ onLogin, onError }) {
                   id="password"
                   type="password"
                   className="login-input"
-                  placeholder={isSignUp ? "At least 6 characters" : "Enter your password"}
+                  placeholder={isSignUp ? "Create a password" : "Enter your password"}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   disabled={isLoading}
                   required
-                  minLength={isSignUp ? 6 : undefined}
+                  minLength={isSignUp ? PASSWORD_MIN_LENGTH : undefined}
                 />
+                {isSignUp && (
+                  <ul className="login-requirements">
+                    {PASSWORD_REQUIREMENTS.map(({ label, test }) => (
+                      <li key={label} className={test(password) ? "login-requirement-met" : ""}>
+                        {test(password) ? "✓" : "○"} {label}
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </div>
+
+              {isSignUp && (
+                <div className="login-field">
+                  <label htmlFor="confirmPassword" className="login-label">
+                    Re-enter password
+                  </label>
+                  <input
+                    id="confirmPassword"
+                    type="password"
+                    className="login-input"
+                    placeholder="Confirm your password"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    disabled={isLoading}
+                    required={isSignUp}
+                  />
+                  {confirmPassword && password !== confirmPassword && (
+                    <span className="login-error-text">Passwords do not match</span>
+                  )}
+                </div>
+              )}
 
               <button
                 type="submit"
                 className="login-button"
-                disabled={!email.trim() || !password.trim() || isLoading || (isSignUp && password.length < 6)}
+                disabled={
+                  !email.trim() ||
+                  !password.trim() ||
+                  isLoading ||
+                  (isSignUp && !signUpValid)
+                }
               >
                 {isLoading
                   ? isSignUp

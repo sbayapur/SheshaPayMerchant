@@ -9,20 +9,24 @@ import { warmUpToken, hasStitchConfig } from "./stitchClient.js";
 const app = express();
 const port = process.env.PORT || 4000;
 
-// CORS: restrict to FRONTEND_BASE_URL in production; allow all when unset (local dev)
-// Support origin with or without trailing slash (browsers may send either)
-// Return normalized origin (no trailing slash) to avoid CORS header mismatch
-const allowedOrigin = (process.env.FRONTEND_BASE_URL || "").trim().replace(/\/$/, "") || true;
-const normOrigin = (url) => (url || "").trim().replace(/\/$/, "");
-const corsOptions = typeof allowedOrigin === "string"
-  ? { origin: (origin, cb) => {
-      if (!origin || !allowedOrigin) return cb(null, true);
-      if (normOrigin(origin) === normOrigin(allowedOrigin)) {
-        return cb(null, origin);
-      }
-      cb(null, false);
-    } }
-  : { origin: true };
+// CORS: allow FRONTEND_BASE_URL (comma-separated for multiple). When unset, allow all.
+// Support origin with or without trailing slash; echo exact origin back for strict browsers.
+const normOrigin = (url) => (url || "").trim().toLowerCase().replace(/\/+$/, "");
+const rawAllowed = (process.env.FRONTEND_BASE_URL || "").trim();
+const allowedList = rawAllowed
+  ? rawAllowed.split(",").map((s) => normOrigin(s)).filter(Boolean)
+  : [];
+
+const corsOptions = allowedList.length === 0
+  ? { origin: true }
+  : {
+      origin: (origin, cb) => {
+        if (!origin) return cb(null, true);
+        const norm = normOrigin(origin);
+        if (allowedList.includes(norm)) return cb(null, origin);
+        cb(null, false);
+      },
+    };
 app.use(cors(corsOptions));
 app.use(express.json());
 app.use(morgan("dev"));

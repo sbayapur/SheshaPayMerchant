@@ -172,10 +172,40 @@ body:not(:has(.tablet-frame-container)) .login-screen {
   padding: 20px 0;
 }
 
+.login-success-icon {
+  font-size: 2.5rem;
+  margin: 0 0 12px !important;
+}
+
 .login-success p {
-  margin: 0 0 16px;
+  margin: 0 0 12px;
   color: var(--text);
   font-size: 1rem;
+}
+
+.login-success-hint {
+  color: var(--muted) !important;
+  font-size: 0.9rem !important;
+  margin-bottom: 20px !important;
+}
+
+.login-requirements {
+  margin: 6px 0 0;
+  padding: 0 0 0 20px;
+  font-size: 0.85rem;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.login-requirement-met {
+  color: var(--green);
+}
+
+.login-error-text {
+  font-size: 0.85rem;
+  color: #dc2626;
+  margin-top: 4px;
+  display: block;
 }
 
 @media (max-width: 480px) {
