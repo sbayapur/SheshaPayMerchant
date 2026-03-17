@@ -1156,9 +1156,17 @@ function App() {
     // Show login screen if not logged in
     if (!isLoggedIn) {
       return (
-        <TabletFrame>
-          <LoginScreen onLogin={handleLogin} onError={handleLoginError} />
-        </TabletFrame>
+        <>
+          <TabletFrame>
+            <LoginScreen onLogin={handleLogin} onError={handleLoginError} />
+          </TabletFrame>
+          <Toast
+            message={toast.message}
+            type={toast.type}
+            actionLabel={toast.actionLabel}
+            onAction={toast.onAction}
+          />
+        </>
       );
     }
 
