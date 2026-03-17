@@ -7,9 +7,10 @@
   background: transparent;
 }
 
-/* When not in tablet frame, show background */
-body:not(:has(.tablet-frame-container)) .login-screen {
+/* Login screen - full viewport with gradient background */
+.dashboard-wrapper .login-screen {
   min-height: 100vh;
+  padding: 60px 20px;
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
 }
 
@@ -19,22 +20,8 @@ body:not(:has(.tablet-frame-container)) .login-screen {
   padding: 32px;
   width: 100%;
   max-width: 360px;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
-}
-
-/* Adjust for tablet frame */
-.tablet-content .login-screen {
-  padding: 60px 20px;
-  min-height: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.tablet-content .login-container {
-  max-width: 360px;
-  padding: 32px;
   margin: 0 auto;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
 }
 
 .login-header {
@@ -165,6 +152,12 @@ body:not(:has(.tablet-frame-container)) .login-screen {
 .login-link:disabled {
   cursor: not-allowed;
   opacity: 0.7;
+}
+
+.login-forgot-link {
+  font-size: 0.9rem;
+  margin-top: 6px;
+  font-weight: 500;
 }
 
 .login-success {

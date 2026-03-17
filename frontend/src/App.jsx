@@ -57,6 +57,7 @@ function App() {
   const [view, setView] = useState(viewFromPath()); // "checkout" | "merchant"
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [authLoading, setAuthLoading] = useState(!!supabase);
+  const [needsNewPassword, setNeedsNewPassword] = useState(false);
   const [paymentsLoading, setPaymentsLoading] = useState(false);
   const [paymentsError, setPaymentsError] = useState("");
   const [toast, setToast] = useState({ message: "", type: "" });
@@ -128,8 +129,13 @@ function App() {
 
     initAuth();
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setIsLoggedIn(!!session);
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === "PASSWORD_RECOVERY") {
+        setNeedsNewPassword(true);
+      } else {
+        setNeedsNewPassword(false);
+        setIsLoggedIn(!!session);
+      }
     });
 
     return () => subscription?.unsubscribe();
@@ -1158,7 +1164,12 @@ function App() {
       return (
         <>
           <TabletFrame>
-            <LoginScreen onLogin={handleLogin} onError={handleLoginError} />
+            <LoginScreen
+            onLogin={handleLogin}
+            onError={handleLoginError}
+            needsNewPassword={needsNewPassword}
+            onPasswordUpdated={() => setNeedsNewPassword(false)}
+          />
           </TabletFrame>
           <Toast
             message={toast.message}

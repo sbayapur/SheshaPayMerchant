@@ -22,6 +22,32 @@ body {
   background: var(--bg);
 }
 
+.dashboard-wrapper {
+  min-height: 100vh;
+  width: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  background: var(--bg);
+  position: relative;
+}
+
+.dashboard-wrapper .app {
+  min-height: auto;
+  padding: 24px 12px 16px;
+  padding-top: 28px;
+}
+
+.dashboard-wrapper .top-bar {
+  padding-top: 8px;
+  padding-bottom: 12px;
+}
+
+.dashboard-wrapper .dashboard-card {
+  width: 100%;
+  max-width: 100%;
+  margin: 0;
+}
+
 /* Force hide scrollbar on phone content - global override */
 .phone-content {
   scrollbar-width: none !important;
@@ -1004,13 +1030,11 @@ body:has(.phone-frame-container) .toast {
   max-width: 280px;
 }
 
-/* Override toast positioning when inside tablet frame context */
-body:has(.tablet-frame-container) .toast {
+/* Override toast positioning when inside dashboard */
+body:has(.dashboard-wrapper) .toast {
   right: auto;
   min-width: auto;
-  max-width: 240px;
-  font-size: 0.9rem;
-  padding: 10px 12px;
+  max-width: 320px;
 }
 
 .toast-success {
@@ -1527,39 +1551,22 @@ body:has(.tablet-frame-container) .toast {
   }
 }
 
-/* QR Modal */
+/* QR Modal - full viewport overlay */
 .qr-modal {
   position: fixed;
   top: 0;
   left: 0;
   right: 0;
   bottom: 0;
+  padding: 20px;
+  overflow: hidden;
   background: rgba(0, 0, 0, 0.95);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 10000;
-  padding: 20px;
-}
-
-/* Scope QR modal to tablet frame only when inside tablet frame container */
-/* Position modal absolutely relative to tablet-frame to cover entire frame */
-/* QR modal rendered via portal at tablet-frame level */
-.tablet-frame > .qr-modal {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  padding: 20px;
-  border-radius: 24px;
-  overflow: hidden;
   z-index: 10001;
-  display: flex;
-  align-items: center;
-  justify-content: center;
 }
 
 .qr-modal-content {
@@ -1684,10 +1691,7 @@ body:has(.tablet-frame-container) .toast {
   z-index: 10000 !important; /* Higher z-index to be above everything */
 }
 
-/* Create Invoice modal overlay - IMPORTANT: Only covers the tablet frame, NOT the whole screen
- * This is intentional UX behavior - the overlay should only grey out the frame background,
- * leaving the outer background visible. Do NOT change this to cover the full viewport.
- */
+/* Create Invoice modal overlay - full viewport */
 .create-invoice-overlay {
   position: fixed !important;
   top: 0 !important;
@@ -1696,32 +1700,7 @@ body:has(.tablet-frame-container) .toast {
   bottom: 0 !important;
   width: 100vw !important;
   height: 100vh !important;
-}
-
-/* When inside tablet frame container, constrain to tablet-frame bounds
- * This ensures the overlay only covers the tablet frame area, not the entire screen
- */
-.tablet-frame-container .create-invoice-overlay {
-  position: fixed !important;
-  /* Tablet frame is centered, so position overlay to match */
-  top: 50% !important;
-  left: 50% !important;
-  transform: translate(-50%, -50%) !important;
-  width: min(900px, calc(100vw - 40px)) !important;
-  height: min(1200px, calc(100vh - 40px)) !important;
-  max-width: calc(100vw - 40px) !important;
-  max-height: calc(100vh - 40px) !important;
-  border-radius: 24px !important;
   z-index: 10000 !important;
-  overflow: hidden !important;
-}
-
-@media (max-width: 900px) {
-  .tablet-frame-container .create-invoice-overlay {
-    aspect-ratio: 900 / 1200;
-    height: auto !important;
-    max-height: calc(100vh - 40px) !important;
-  }
 }
 
 .bank-auth-modal {

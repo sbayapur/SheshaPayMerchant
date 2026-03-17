@@ -48,8 +48,10 @@ function validateSignUp(email, password, confirmPassword) {
   return null;
 }
 
-function LoginScreen({ onLogin, onError }) {
+function LoginScreen({ onLogin, onError, needsNewPassword, onPasswordUpdated }) {
   const [isSignUp, setIsSignUp] = useState(false);
+  const [showForgotPassword, setShowForgotPassword] = useState(false);
+  const [forgotPasswordSuccess, setForgotPasswordSuccess] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -129,7 +131,61 @@ function LoginScreen({ onLogin, onError }) {
   const switchMode = () => {
     setIsSignUp((prev) => !prev);
     setSignUpSuccess(false);
+    setShowForgotPassword(false);
+    setForgotPasswordSuccess(false);
     setConfirmPassword("");
+  };
+
+  const handleForgotPassword = async (e) => {
+    e.preventDefault();
+    if (!email.trim()) return;
+    if (!supabase) {
+      onError?.("Supabase is not configured.");
+      return;
+    }
+    setIsLoading(true);
+    setForgotPasswordSuccess(false);
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+        redirectTo: window.location.origin + "/",
+      });
+      if (error) {
+        onError?.(mapAuthError(error, false) || error.message);
+        return;
+      }
+      setForgotPasswordSuccess(true);
+    } catch (err) {
+      onError?.(err?.message || "Failed to send reset email.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleSetNewPassword = async (e) => {
+    e.preventDefault();
+    if (PASSWORD_REQUIREMENTS.some((r) => !r.test(password))) {
+      onError?.("Password must be at least 8 characters, with a letter and a number.");
+      return;
+    }
+    if (password !== confirmPassword) {
+      onError?.("Passwords do not match.");
+      return;
+    }
+    if (!supabase) return;
+    setIsLoading(true);
+    try {
+      const { error } = await supabase.auth.updateUser({ password });
+      if (error) {
+        onError?.(mapAuthError(error, true) || error.message);
+        return;
+      }
+      onPasswordUpdated?.();
+      onLogin?.();
+    } catch (err) {
+      onError?.(err?.message || "Failed to update password.");
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const signUpValid =
@@ -138,6 +194,130 @@ function LoginScreen({ onLogin, onError }) {
     /[a-zA-Z]/.test(password) &&
     /\d/.test(password) &&
     password === confirmPassword;
+
+  const newPasswordValid =
+    password.length >= PASSWORD_MIN_LENGTH &&
+    /[a-zA-Z]/.test(password) &&
+    /\d/.test(password) &&
+    password === confirmPassword;
+
+  // Set new password (after clicking reset link in email)
+  if (needsNewPassword) {
+    return (
+      <div className="login-screen">
+        <div className="login-container">
+          <div className="login-header">
+            <img src="/shesha_pay_logo.png" alt="Shesha Pay" className="login-logo" />
+            <h1 className="login-title">Set new password</h1>
+            <p className="login-subtitle">Enter your new password below.</p>
+          </div>
+          <form className="login-form" onSubmit={handleSetNewPassword}>
+            <div className="login-field">
+              <label htmlFor="new-password" className="login-label">New password</label>
+              <input
+                id="new-password"
+                type="password"
+                className="login-input"
+                placeholder="Create a password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                disabled={isLoading}
+                required
+                minLength={PASSWORD_MIN_LENGTH}
+              />
+              <ul className="login-requirements">
+                {PASSWORD_REQUIREMENTS.map(({ label, test }) => (
+                  <li key={label} className={test(password) ? "login-requirement-met" : ""}>
+                    {test(password) ? "✓" : "○"} {label}
+                  </li>
+                ))}
+              </ul>
+            </div>
+            <div className="login-field">
+              <label htmlFor="new-confirm" className="login-label">Re-enter password</label>
+              <input
+                id="new-confirm"
+                type="password"
+                className="login-input"
+                placeholder="Confirm your password"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                disabled={isLoading}
+                required
+              />
+              {confirmPassword && password !== confirmPassword && (
+                <span className="login-error-text">Passwords do not match</span>
+              )}
+            </div>
+            <button
+              type="submit"
+              className="login-button"
+              disabled={!newPasswordValid || isLoading}
+            >
+              {isLoading ? "Updating..." : "Update password"}
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
+  // Forgot password flow
+  if (showForgotPassword) {
+    return (
+      <div className="login-screen">
+        <div className="login-container">
+          <div className="login-header">
+            <img src="/shesha_pay_logo.png" alt="Shesha Pay" className="login-logo" />
+            <h1 className="login-title">Reset password</h1>
+            <p className="login-subtitle">
+              {forgotPasswordSuccess
+                ? "Check your email"
+                : "Enter your email and we'll send you a reset link."}
+            </p>
+          </div>
+          {forgotPasswordSuccess ? (
+            <div className="login-success">
+              <p className="login-success-icon">✉️</p>
+              <p>We sent a password reset link to <strong>{email}</strong>.</p>
+              <p className="login-success-hint">Click the link in that email to set a new password.</p>
+              <button type="button" className="login-link" onClick={() => { setShowForgotPassword(false); setForgotPasswordSuccess(false); }}>
+                Back to sign in
+              </button>
+            </div>
+          ) : (
+            <form className="login-form" onSubmit={handleForgotPassword}>
+              <div className="login-field">
+                <label htmlFor="reset-email" className="login-label">Email</label>
+                <input
+                  id="reset-email"
+                  type="email"
+                  className="login-input"
+                  placeholder="you@example.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  disabled={isLoading}
+                  required
+                />
+              </div>
+              <button type="submit" className="login-button" disabled={!email.trim() || isLoading}>
+                {isLoading ? "Sending..." : "Send reset link"}
+              </button>
+              <button
+                type="button"
+                className="login-link"
+                onClick={() => setShowForgotPassword(false)}
+                disabled={isLoading}
+                style={{ marginTop: 12, display: "block" }}
+              >
+                Back to sign in
+              </button>
+            </form>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="login-screen">
@@ -211,6 +391,16 @@ function LoginScreen({ onLogin, onError }) {
                       </li>
                     ))}
                   </ul>
+                )}
+                {!isSignUp && (
+                  <button
+                    type="button"
+                    className="login-link login-forgot-link"
+                    onClick={() => setShowForgotPassword(true)}
+                    disabled={isLoading}
+                  >
+                    Forgot password?
+                  </button>
                 )}
               </div>
 

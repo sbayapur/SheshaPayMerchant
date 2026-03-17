@@ -92,13 +92,13 @@ function MerchantDashboard({
   const [pendingPayment, setPendingPayment] = useState(null);
   const [timePeriod, setTimePeriod] = useState("all"); // "all", "1day", "1month", "year"
 
-  // Ref to find tablet-frame for portal rendering
+  // Ref for portal target (modal overlays)
   const appRef = useRef(null);
-  const [tabletFrameEl, setTabletFrameEl] = useState(null);
+  const [portalEl, setPortalEl] = useState(null);
   useEffect(() => {
     if (appRef.current) {
-      const frame = appRef.current.closest('.tablet-frame');
-      if (frame) setTabletFrameEl(frame);
+      const el = appRef.current.closest(".dashboard-wrapper") || document.body;
+      setPortalEl(el);
     }
   }, []);
 
@@ -1020,7 +1020,7 @@ function MerchantDashboard({
           </>
         )}
 
-        {/* QR Modal - rendered via portal to tablet-frame for proper centering */}
+        {/* QR Modal - rendered via portal */}
 
         {/* Create Invoice Options Modal 
             Note: Uses create-invoice-overlay class to only grey out the tablet frame, not the whole screen */}
@@ -1672,8 +1672,8 @@ function MerchantDashboard({
         </button>
       </div>
 
-      {/* QR Modal - portaled to tablet-frame for proper centering */}
-      {qrPreview.open && qrPreview.url && tabletFrameEl && createPortal(
+      {/* QR Modal - portaled for proper overlay */}
+      {qrPreview.open && qrPreview.url && portalEl && createPortal(
         <div className="qr-modal">
           <div className="qr-modal-content">
             <div className="qr-modal-header">
@@ -1703,7 +1703,7 @@ function MerchantDashboard({
             )}
           </div>
         </div>,
-        tabletFrameEl
+        portalEl
       )}
     </div>
   );
