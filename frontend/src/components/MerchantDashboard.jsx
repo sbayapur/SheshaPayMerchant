@@ -35,7 +35,6 @@ function MerchantDashboard({
   qrPreview,
   onCloseQr,
   onCopyCheckoutLink,
-  navigateView,
   employees,
   employeesLoading,
   employeesError,
@@ -46,7 +45,7 @@ function MerchantDashboard({
   const API_BASE = getApiBase();
   const baseUrl = window.location.origin.includes("localhost")
     ? window.location.origin
-    : "https://demo.shesha";
+    : (import.meta.env.VITE_CUSTOMER_BASE_URL || "https://demo.shesha").replace(/\/+$/, "");
 
   const createPaymentLinkUrl = async (payment) => {
     if (!payment?.id || !payment?.amount) return null;
@@ -1657,21 +1656,6 @@ function MerchantDashboard({
       )}
 
       {/* View Logs Button - Top Right of Screen */}
-      <div style={{
-        position: "fixed",
-        top: "20px",
-        right: "20px",
-        zIndex: 1000
-      }}>
-        <button
-          className="ghost-button"
-          onClick={() => navigateView("logs")}
-          style={{ fontSize: "0.85rem" }}
-        >
-          View Logs
-        </button>
-      </div>
-
       {/* QR Modal - portaled for proper overlay */}
       {qrPreview.open && qrPreview.url && portalEl && createPortal(
         <div className="qr-modal">

@@ -5,6 +5,7 @@ import rateLimit from "express-rate-limit";
 import { randomUUID, randomBytes } from "crypto";
 import { startPayment } from "./paymentsProvider.js";
 import { warmUpToken, hasStitchConfig } from "./stitchClient.js";
+import { supabaseAdmin } from "./supabaseClient.js";
 
 const app = express();
 const port = process.env.PORT || 4000;
@@ -64,6 +65,8 @@ const paymentIntentEvents = new Map();
 const paymentLinks = new Map();       // token -> { orderId, amount, currency, note, items, isoRef, merchantName, createdAt, expiresAt, invoiceId? }
 const PAYMENT_LINK_TTL_DAYS = Number(process.env.PAYMENT_LINK_TTL_DAYS) || 30;
 const FRONTEND_BASE_URL = process.env.FRONTEND_BASE_URL || "https://demo.shesha";
+// Customer checkout app URL (where /pay/{token} links point) - separate from merchant dashboard
+const CUSTOMER_BASE_URL = (process.env.CUSTOMER_BASE_URL || "").trim().replace(/\/+$/, "") || FRONTEND_BASE_URL;
 
 function generatePaymentLinkToken() {
   return randomBytes(16).toString("base64url");
@@ -209,19 +212,39 @@ function getAccountingDataForDateRange(startDate, endDate) {
 
 // No sample orders - start with empty order history
 
-// Function to log webhook events
-function logWebhookEvent(event) {
+// Function to log webhook events (in-memory + Supabase)
+async function logWebhookEvent(event) {
   webhookEvents.push(event);
-  // Keep only the last MAX_EVENTS events
   if (webhookEvents.length > MAX_EVENTS) {
     webhookEvents.shift();
   }
-  // Also store per-payment-intent for full lifecycle tracking
   if (event.paymentIntentId) {
     if (!paymentIntentEvents.has(event.paymentIntentId)) {
       paymentIntentEvents.set(event.paymentIntentId, []);
     }
     paymentIntentEvents.get(event.paymentIntentId).push(event);
+  }
+
+  // Push to Supabase transactions table
+  if (supabaseAdmin) {
+    try {
+      await supabaseAdmin.from("transactions").insert({
+        event_id: event.id,
+        type: event.type,
+        timestamp: event.timestamp,
+        payment_intent_id: event.paymentIntentId,
+        order_id: event.orderId,
+        status: event.status,
+        provider: event.provider,
+        amount: event.amount,
+        currency: event.currency || "ZAR",
+        iso20022_meta: typeof event.iso20022_meta === "string" ? event.iso20022_meta : (event.iso20022_meta ? JSON.stringify(event.iso20022_meta) : null),
+        settlement_ref: event.settlementRef,
+        completed_at: event.completedAt,
+      });
+    } catch (err) {
+      console.error("[Transactions] Failed to insert into Supabase:", err.message);
+    }
   }
 }
 
@@ -1084,48 +1107,108 @@ app.delete("/api/accounting", (req, res) => {
   res.json({ message: "Accounting data reset" });
 });
 
-// Demo logs endpoint - returns recent webhook events
-app.get("/api/demo/logs", (_req, res) => {
+// Transactions from Supabase (or fallback to in-memory when Supabase not configured)
+app.get("/api/transactions", async (req, res) => {
+  const paymentIntentId = req.query.payment_intent_id;
+  const intent = paymentIntentId ? paymentIntents.get(paymentIntentId) : null;
+
+  if (supabaseAdmin) {
+    try {
+      let query = supabaseAdmin.from("transactions").select("*").order("timestamp", { ascending: true });
+      if (paymentIntentId) {
+        query = query.eq("payment_intent_id", paymentIntentId);
+      } else {
+        query = query.limit(100).order("timestamp", { ascending: false });
+      }
+      const { data, error } = await query;
+      if (error) throw error;
+
+      const mapRow = (row) => ({
+        id: row.event_id || row.id,
+        type: row.type,
+        timestamp: row.timestamp,
+        paymentIntentId: row.payment_intent_id,
+        orderId: row.order_id,
+        status: row.status,
+        provider: row.provider,
+        amount: row.amount,
+        currency: row.currency,
+        iso20022_meta: row.iso20022_meta,
+        settlementRef: row.settlement_ref,
+        completedAt: row.completed_at,
+      });
+
+      if (paymentIntentId && intent) {
+        return res.json({
+          paymentIntentId,
+          currentStatus: intent.status,
+          events: (data || []).map(mapRow),
+        });
+      }
+      return res.json((data || []).map(mapRow));
+    } catch (err) {
+      console.error("[Transactions] Failed to fetch from Supabase:", err.message);
+    }
+  }
+
+  // Fallback: in-memory
+  if (paymentIntentId && intent) {
+    const events = paymentIntentEvents.get(paymentIntentId) || [];
+    const sorted = [...events].sort(
+      (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+    );
+    return res.json({
+      paymentIntentId,
+      currentStatus: intent.status,
+      events: sorted,
+    });
+  }
   res.json(webhookEvents);
 });
 
-// Clear webhook events endpoint (for resetting demo data)
-app.delete("/api/demo/logs", (_req, res) => {
-  webhookEvents.length = 0; // Clear the array
-  res.json({ success: true, message: "Webhook events cleared" });
-});
-
-// Get ISO 20022 metadata for a specific payment intent
-app.get("/api/demo/logs/payment-intent/:id", (req, res) => {
-  const intent = paymentIntents.get(req.params.id);
-  if (!intent) {
-    return res.status(404).json({ error: "Payment intent not found" });
-  }
-  
-  res.json({
-    id: intent.id,
-    iso20022_meta: intent.iso20022_meta,
-    amount: intent.amount,
-    currency: intent.currency,
-    status: intent.status,
-    createdAt: intent.createdAt,
-  });
-});
-
-// Get all ISO 20022 lifecycle events for a specific payment intent
-app.get("/api/demo/logs/payment-intent/:id/events", (req, res) => {
+// Get ISO 20022 lifecycle events for a specific payment intent (for per-payment log modal)
+app.get("/api/demo/logs/payment-intent/:id/events", async (req, res) => {
   const intentId = req.params.id;
   const intent = paymentIntents.get(intentId);
   if (!intent) {
     return res.status(404).json({ error: "Payment intent not found" });
   }
 
-  // Return per-intent events sorted chronologically
+  if (supabaseAdmin) {
+    try {
+      const { data, error } = await supabaseAdmin
+        .from("transactions")
+        .select("*")
+        .eq("payment_intent_id", intentId)
+        .order("timestamp", { ascending: true });
+      if (error) throw error;
+      return res.json({
+        paymentIntentId: intentId,
+        currentStatus: intent.status,
+        events: (data || []).map((row) => ({
+          id: row.event_id || row.id,
+          type: row.type,
+          timestamp: row.timestamp,
+          paymentIntentId: row.payment_intent_id,
+          orderId: row.order_id,
+          status: row.status,
+          provider: row.provider,
+          amount: row.amount,
+          currency: row.currency,
+          iso20022_meta: row.iso20022_meta,
+          settlementRef: row.settlement_ref,
+          completedAt: row.completed_at,
+        })),
+      });
+    } catch (err) {
+      console.error("[Transactions] Failed to fetch from Supabase:", err.message);
+    }
+  }
+
   const events = paymentIntentEvents.get(intentId) || [];
   const sorted = [...events].sort(
     (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
   );
-
   res.json({
     paymentIntentId: intentId,
     currentStatus: intent.status,
@@ -1173,8 +1256,8 @@ app.post("/api/payment-links", (req, res) => {
   };
 
   paymentLinks.set(token, linkData);
-  const frontendBase = baseUrl || FRONTEND_BASE_URL;
-  const url = `${frontendBase}/pay/${token}`;
+  const linkBase = CUSTOMER_BASE_URL || (baseUrl || "").replace(/\/+$/, "") || FRONTEND_BASE_URL;
+  const url = `${linkBase}/pay/${token}`;
 
   console.log(`[PaymentLink] Created for ${orderId}, expires ${expiresAt.toISOString()}`);
   res.status(201).json({ token, url });
@@ -1264,7 +1347,7 @@ app.post("/api/invoices", (req, res) => {
       expiresAt: expiresAt.toISOString(),
       invoiceId,
     });
-    checkoutLinkToUse = `${FRONTEND_BASE_URL}/pay/${token}`;
+    checkoutLinkToUse = `${CUSTOMER_BASE_URL}/pay/${token}`;
     console.log(`[Invoice] Auto-created payment link for ${invoiceId}`);
   }
 

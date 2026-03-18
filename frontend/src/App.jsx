@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import "./App.css";
 import MerchantDashboard from "./components/MerchantDashboard.jsx";
 import Toast from "./components/Toast.jsx";
-import LogsView from "./components/LogsView.jsx";
 import TabletFrame from "./components/TabletFrame.jsx";
 import LoginScreen from "./components/LoginScreen.jsx";
 import CheckoutView from "./components/CheckoutView.jsx";
@@ -27,7 +26,6 @@ function calculateTotals(items) {
 
 function viewFromPath() {
   const path = window.location.pathname.toLowerCase();
-  if (path.includes("/demo/logs")) return "logs";
   if (path === "/pay" || path.startsWith("/pay/")) return "checkout";
   if (path === "/customer" || path.startsWith("/customer/")) return "checkout";
   return "merchant";
@@ -741,7 +739,7 @@ function App() {
     if (!payment?.id || !payment?.amount) return null;
     const baseUrl = window.location.origin.includes("localhost")
       ? window.location.origin
-      : "https://demo.shesha";
+      : (import.meta.env.VITE_CUSTOMER_BASE_URL || "https://demo.shesha").replace(/\/+$/, "");
     const res = await fetch(`${API_BASE}/api/payment-links`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -812,14 +810,6 @@ function App() {
         showToast("Failed to copy link. Please copy manually.", "error");
       }
       document.body.removeChild(textArea);
-    }
-  };
-
-  const navigateView = (nextView) => {
-    setView(nextView);
-    const targetPath = nextView === "logs" ? "/demo/logs" : "/";
-    if (window.location.pathname !== targetPath) {
-      window.history.pushState({}, "", targetPath);
     }
   };
 
@@ -1056,20 +1046,6 @@ function App() {
   const receiptSubtotal = merchantReceiptTotals.subtotal;
   const receiptTax = merchantReceiptTotals.tax;
 
-  if (view === "logs") {
-    return (
-      <>
-        <LogsView />
-        <Toast
-          message={toast.message}
-          type={toast.type}
-          actionLabel={toast.actionLabel}
-          onAction={toast.onAction}
-        />
-      </>
-    );
-  }
-
   if (view === "checkout") {
     return (
       <>
@@ -1224,7 +1200,6 @@ function App() {
           qrPreview={qrPreview}
           onCloseQr={() => setQrPreview({ id: "", url: "", open: false, payment: null })}
           onCopyCheckoutLink={handleCopyCheckoutLink}
-          navigateView={navigateView}
           employees={employees}
           employeesLoading={employeesLoading}
           employeesError={employeesError}
