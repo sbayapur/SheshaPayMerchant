@@ -48,7 +48,7 @@ function validateSignUp(email, password, confirmPassword) {
   return null;
 }
 
-function LoginScreen({ onLogin, onError, needsNewPassword, onPasswordUpdated }) {
+function LoginScreen({ onLogin, onError, needsNewPassword, onPasswordUpdated, onCancelPasswordRecovery }) {
   const [isSignUp, setIsSignUp] = useState(false);
   const [showForgotPassword, setShowForgotPassword] = useState(false);
   const [forgotPasswordSuccess, setForgotPasswordSuccess] = useState(false);
@@ -180,6 +180,10 @@ function LoginScreen({ onLogin, onError, needsNewPassword, onPasswordUpdated }) 
         return;
       }
       onPasswordUpdated?.();
+      if (typeof window !== "undefined" && window.history?.replaceState) {
+        const path = window.location.pathname || "/";
+        window.history.replaceState(null, "", path);
+      }
       onLogin?.();
     } catch (err) {
       onError?.(err?.message || "Failed to update password.");
@@ -209,7 +213,7 @@ function LoginScreen({ onLogin, onError, needsNewPassword, onPasswordUpdated }) 
           <div className="login-header">
             <img src="/shesha_pay_logo.png" alt="Shesha Pay" className="login-logo" />
             <h1 className="login-title">Set new password</h1>
-            <p className="login-subtitle">Enter your new password below.</p>
+            <p className="login-subtitle">Your reset link is valid for a short time. Choose a new password to secure your account.</p>
           </div>
           <form className="login-form" onSubmit={handleSetNewPassword}>
             <div className="login-field">
@@ -256,6 +260,17 @@ function LoginScreen({ onLogin, onError, needsNewPassword, onPasswordUpdated }) 
             >
               {isLoading ? "Updating..." : "Update password"}
             </button>
+            {onCancelPasswordRecovery && (
+              <button
+                type="button"
+                className="login-link"
+                onClick={() => onCancelPasswordRecovery()}
+                disabled={isLoading}
+                style={{ marginTop: 16, display: "block", width: "100%", textAlign: "center" }}
+              >
+                Cancel and sign out
+              </button>
+            )}
           </form>
         </div>
       </div>

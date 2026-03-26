@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import "./App.css";
 import MerchantDashboard from "./components/MerchantDashboard.jsx";
 import Toast from "./components/Toast.jsx";
@@ -8,6 +8,7 @@ import CheckoutView from "./components/CheckoutView.jsx";
 import SuccessView from "./components/SuccessView.jsx";
 import { supabase } from "./lib/supabase.js";
 import { getApiBase } from "./lib/api.js";
+import { sessionRequiresNewPassword } from "./lib/authRecovery.js";
 
 const API_BASE = getApiBase();
 const ORDER_TOTAL = 75;
@@ -56,6 +57,8 @@ function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [authLoading, setAuthLoading] = useState(!!supabase);
   const [needsNewPassword, setNeedsNewPassword] = useState(false);
+  /** Blocks dashboard until user sets a new password after recovery email link */
+  const passwordRecoveryPending = useRef(false);
   const [paymentsLoading, setPaymentsLoading] = useState(false);
   const [paymentsError, setPaymentsError] = useState("");
   const [toast, setToast] = useState({ message: "", type: "" });
@@ -107,36 +110,66 @@ function App() {
     return () => window.removeEventListener("popstate", handlePop);
   }, []);
 
-  // Supabase auth: check session on load and listen for changes
+  // Supabase auth: password-recovery links issue a session; we must require a new password before dashboard access
   useEffect(() => {
     if (!supabase) {
       setAuthLoading(false);
       return;
     }
 
-    const initAuth = async () => {
-      try {
-        const { data: { session } } = await supabase.auth.getSession();
-        setIsLoggedIn(!!session);
-      } catch (err) {
-        console.error("Auth session check failed:", err);
-      } finally {
-        setAuthLoading(false);
-      }
-    };
-
-    initAuth();
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+    const applySession = (event, session) => {
       if (event === "PASSWORD_RECOVERY") {
+        passwordRecoveryPending.current = true;
         setNeedsNewPassword(true);
-      } else {
+        setIsLoggedIn(false);
+        return;
+      }
+
+      if (session && sessionRequiresNewPassword(session)) {
+        passwordRecoveryPending.current = true;
+        setNeedsNewPassword(true);
+        setIsLoggedIn(false);
+        return;
+      }
+
+      if (
+        (event === "USER_UPDATED" || event === "TOKEN_REFRESHED") &&
+        session &&
+        !sessionRequiresNewPassword(session)
+      ) {
+        passwordRecoveryPending.current = false;
         setNeedsNewPassword(false);
         setIsLoggedIn(!!session);
+        return;
       }
+
+      if (event === "SIGNED_IN" && passwordRecoveryPending.current) {
+        setNeedsNewPassword(true);
+        setIsLoggedIn(false);
+        return;
+      }
+
+      if (event === "TOKEN_REFRESHED" && passwordRecoveryPending.current) {
+        setIsLoggedIn(false);
+        return;
+      }
+
+      if (passwordRecoveryPending.current) {
+        setNeedsNewPassword(true);
+        setIsLoggedIn(false);
+        return;
+      }
+
+      setNeedsNewPassword(false);
+      setIsLoggedIn(!!session);
+    };
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      applySession(event, session);
+      setAuthLoading(false);
     });
 
-    return () => subscription?.unsubscribe();
+    return () => subscription.unsubscribe();
   }, []);
 
   const showToast = (
@@ -1117,10 +1150,17 @@ function App() {
   };
 
   const handleLogout = async () => {
+    passwordRecoveryPending.current = false;
+    setNeedsNewPassword(false);
     if (supabase) {
       await supabase.auth.signOut();
     }
     setIsLoggedIn(false);
+  };
+
+  const handlePasswordRecoveryCompleted = () => {
+    passwordRecoveryPending.current = false;
+    setNeedsNewPassword(false);
   };
 
   if (view === "merchant") {
@@ -1144,7 +1184,8 @@ function App() {
             onLogin={handleLogin}
             onError={handleLoginError}
             needsNewPassword={needsNewPassword}
-            onPasswordUpdated={() => setNeedsNewPassword(false)}
+            onPasswordUpdated={handlePasswordRecoveryCompleted}
+            onCancelPasswordRecovery={handleLogout}
           />
           </TabletFrame>
           <Toast
