@@ -1,3 +1,4 @@
+import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import morgan from "morgan";
@@ -6,6 +7,7 @@ import { randomUUID, randomBytes } from "crypto";
 import { startPayment } from "./paymentsProvider.js";
 import { warmUpToken, hasStitchConfig } from "./stitchClient.js";
 import { supabaseAdmin } from "./supabaseClient.js";
+import { getMerchantUserIdFromRequest } from "./merchantAuth.js";
 
 const app = express();
 const port = process.env.PORT || 4000;
@@ -212,7 +214,16 @@ function getAccountingDataForDateRange(startDate, endDate) {
 
 // No sample orders - start with empty order history
 
-// Function to log webhook events (in-memory + Supabase)
+function resolveMerchantUserIdForEvent(event) {
+  if (event.merchantUserId) return event.merchantUserId;
+  if (event.paymentIntentId) {
+    const intent = paymentIntents.get(event.paymentIntentId);
+    if (intent?.merchant_user_id) return intent.merchant_user_id;
+  }
+  return null;
+}
+
+// Function to log webhook events (in-memory + Supabase, scoped per merchant when known)
 async function logWebhookEvent(event) {
   webhookEvents.push(event);
   if (webhookEvents.length > MAX_EVENTS) {
@@ -225,10 +236,11 @@ async function logWebhookEvent(event) {
     paymentIntentEvents.get(event.paymentIntentId).push(event);
   }
 
-  // Push to Supabase transactions table
+  const merchant_user_id = resolveMerchantUserIdForEvent(event);
+
   if (supabaseAdmin) {
     try {
-      await supabaseAdmin.from("transactions").insert({
+      const { error } = await supabaseAdmin.from("transactions").insert({
         event_id: event.id,
         type: event.type,
         timestamp: event.timestamp,
@@ -241,11 +253,208 @@ async function logWebhookEvent(event) {
         iso20022_meta: typeof event.iso20022_meta === "string" ? event.iso20022_meta : (event.iso20022_meta ? JSON.stringify(event.iso20022_meta) : null),
         settlement_ref: event.settlementRef,
         completed_at: event.completedAt,
+        merchant_user_id,
       });
+      if (error) throw error;
     } catch (err) {
       console.error("[Transactions] Failed to insert into Supabase:", err.message);
     }
+  } else {
+    console.warn("[Transactions] SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY not set — events are in-memory only until restart.");
   }
+}
+
+async function persistPaymentIntent(intent) {
+  if (!supabaseAdmin || !intent?.id) return;
+  try {
+    const { error } = await supabaseAdmin.from("payment_intents_store").upsert(
+      {
+        id: intent.id,
+        merchant_user_id: intent.merchant_user_id || null,
+        payload: intent,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "id" }
+    );
+    if (error) throw error;
+  } catch (err) {
+    console.error("[PaymentIntents] Persist to Supabase failed:", err.message);
+  }
+}
+
+async function loadPaymentIntentsFromSupabase() {
+  if (!supabaseAdmin) return;
+  try {
+    const { data, error } = await supabaseAdmin.from("payment_intents_store").select("payload");
+    if (error) throw error;
+    let n = 0;
+    for (const row of data || []) {
+      const p = row.payload;
+      if (p?.id) {
+        paymentIntents.set(p.id, p);
+        n += 1;
+      }
+    }
+    if (n) console.log(`[PaymentIntents] Restored ${n} intent(s) from Supabase`);
+  } catch (err) {
+    console.error("[PaymentIntents] Load from Supabase failed:", err.message);
+  }
+}
+
+function mapTransactionRow(row) {
+  return {
+    id: row.event_id || row.id,
+    type: row.type,
+    timestamp: row.timestamp,
+    paymentIntentId: row.payment_intent_id,
+    orderId: row.order_id,
+    status: row.status,
+    provider: row.provider,
+    amount: row.amount,
+    currency: row.currency,
+    iso20022_meta: row.iso20022_meta,
+    settlementRef: row.settlement_ref,
+    completedAt: row.completed_at,
+  };
+}
+
+function normalizeLogStatus(status) {
+  if (!status) return "";
+  const u = String(status).toUpperCase();
+  if (u === "SUCCEEDED") return "SETTLED";
+  return u;
+}
+
+function isLogTerminalSettled(status) {
+  const n = normalizeLogStatus(status);
+  return n === "SETTLED" || n === "COMPLETED";
+}
+
+function isLogFailed(status) {
+  return normalizeLogStatus(status) === "FAILED";
+}
+
+function periodStartDate(period) {
+  if (!period || period === "all") return null;
+  const now = new Date();
+  if (period === "1day") return new Date(now.getTime() - 24 * 60 * 60 * 1000);
+  if (period === "1month") return new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+  if (period === "year") return new Date(now.getFullYear(), 0, 1);
+  return null;
+}
+
+function logTimestampInPeriod(isoTs, period) {
+  if (!isoTs) return false;
+  const start = periodStartDate(period);
+  if (!start) return true;
+  return new Date(isoTs).getTime() >= start.getTime();
+}
+
+async function fetchAllTransactionRowsForMerchant(merchantId) {
+  const pageSize = 1000;
+  let from = 0;
+  const all = [];
+  for (;;) {
+    const { data, error } = await supabaseAdmin
+      .from("transactions")
+      .select("*")
+      .eq("merchant_user_id", merchantId)
+      .order("timestamp", { ascending: true })
+      .range(from, from + pageSize - 1);
+    if (error) throw error;
+    if (!data?.length) break;
+    all.push(...data);
+    if (data.length < pageSize) break;
+    from += pageSize;
+  }
+  return all;
+}
+
+function buildInMemoryTransactionRowsForMerchant(merchantId) {
+  const rows = [];
+  for (const intent of paymentIntents.values()) {
+    if (intent.merchant_user_id !== merchantId) continue;
+    const events = paymentIntentEvents.get(intent.id) || [];
+    for (const e of events) {
+      rows.push({
+        payment_intent_id: e.paymentIntentId,
+        order_id: e.orderId,
+        status: e.status,
+        type: e.type,
+        timestamp: e.timestamp,
+        amount: e.amount,
+        currency: e.currency,
+        merchant_user_id: merchantId,
+      });
+    }
+  }
+  rows.sort(
+    (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+  );
+  return rows;
+}
+
+function aggregateTransactionLogStats(rows, period) {
+  const byIntent = new Map();
+  for (const row of rows) {
+    const pid = row.payment_intent_id;
+    if (!pid) continue;
+    if (!byIntent.has(pid)) byIntent.set(pid, []);
+    byIntent.get(pid).push(row);
+  }
+
+  let totalReceived = 0;
+  let settledCount = 0;
+  let pendingCount = 0;
+
+  for (const [, evs] of byIntent) {
+    const sorted = evs
+      .slice()
+      .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+    const last = sorted[sorted.length - 1];
+    const latest = normalizeLogStatus(last?.status);
+
+    let settledAt = null;
+    let settledAmount = 0;
+    for (let i = sorted.length - 1; i >= 0; i--) {
+      const st = normalizeLogStatus(sorted[i].status);
+      if (st === "SETTLED" || st === "COMPLETED") {
+        settledAt = sorted[i].timestamp;
+        settledAmount = Number(sorted[i].amount) || 0;
+        break;
+      }
+    }
+    if (!settledAmount) {
+      for (const e of sorted) {
+        const a = Number(e.amount);
+        if (a) {
+          settledAmount = a;
+          break;
+        }
+      }
+    }
+
+    const firstTs = sorted[0]?.timestamp;
+    const hasTerminalSettled = sorted.some((e) => isLogTerminalSettled(e.status));
+
+    if (isLogTerminalSettled(last?.status) && settledAt) {
+      if (logTimestampInPeriod(settledAt, period)) {
+        settledCount += 1;
+        totalReceived += settledAmount;
+      }
+    } else if (!isLogFailed(last?.status)) {
+      if (logTimestampInPeriod(firstTs, period)) {
+        pendingCount += 1;
+      }
+    }
+  }
+
+  return {
+    totalReceived,
+    settledCount,
+    pendingCount,
+    period: period || "all",
+  };
 }
 
 // ─── Invoice & Reminder Helper Functions ─────────────────────────────────────
@@ -450,11 +659,13 @@ app.post("/api/bank-link", (req, res) => {
   res.json({ bankLinkId });
 });
 
-app.post("/api/payment-intents", (req, res) => {
+app.post("/api/payment-intents", async (req, res) => {
   const { amount, currency = "ZAR", description = "", orderId } = req.body || {};
   if (!amount) {
     return res.status(400).json({ error: "amount is required" });
   }
+
+  const merchant_user_id = (await getMerchantUserIdFromRequest(req)) || undefined;
 
   const id = randomUUID();
   const orderIdToUse = orderId || id;
@@ -484,12 +695,14 @@ app.post("/api/payment-intents", (req, res) => {
     status: "PENDING",
     createdAt: now.toISOString(),
     iso20022_meta,
+    ...(merchant_user_id && { merchant_user_id }),
   };
 
   paymentIntents.set(id, intent);
-  
+  await persistPaymentIntent(intent);
+
   // Log payment intent creation (PENDING status) - Step 1 of ISO 20022 payment flow
-  logWebhookEvent({
+  await logWebhookEvent({
     id: randomUUID(),
     type: "payment_intent_created",
     timestamp: now.toISOString(),
@@ -500,17 +713,39 @@ app.post("/api/payment-intents", (req, res) => {
     currency: currency,
     iso20022_meta: iso20022_meta,
   });
-  
+
   res.status(201).json(intent);
 });
 
-app.get("/api/payment-intents", (_req, res) => {
-  res.json(Array.from(paymentIntents.values()));
+app.get("/api/payment-intents", async (req, res) => {
+  const merchantId = await getMerchantUserIdFromRequest(req);
+  const all = Array.from(paymentIntents.values());
+  if (merchantId) {
+    return res.json(all.filter((i) => i.merchant_user_id === merchantId));
+  }
+  res.json(all);
 });
 
-app.delete("/api/payment-intents", (_req, res) => {
-  paymentIntents.clear();
-  // Also reset accounting when clearing payment intents
+app.delete("/api/payment-intents", async (req, res) => {
+  const merchantId = await getMerchantUserIdFromRequest(req);
+
+  if (merchantId) {
+    for (const id of [...paymentIntents.keys()]) {
+      const intent = paymentIntents.get(id);
+      if (intent?.merchant_user_id === merchantId) {
+        paymentIntents.delete(id);
+      }
+    }
+    if (supabaseAdmin) {
+      await supabaseAdmin.from("payment_intents_store").delete().eq("merchant_user_id", merchantId);
+    }
+  } else {
+    paymentIntents.clear();
+    if (supabaseAdmin) {
+      await supabaseAdmin.from("payment_intents_store").delete().gte("updated_at", "1970-01-01T00:00:00Z");
+    }
+  }
+
   accountingData.totalRevenue = 0;
   accountingData.totalRevenueExcludingVAT = 0;
   accountingData.totalVAT = 0;
@@ -519,7 +754,7 @@ app.delete("/api/payment-intents", (_req, res) => {
   accountingData.totalCashOut = 0;
   accountingData.transactions = [];
   accountingData.lastUpdated = new Date().toISOString();
-  res.json({ message: "All payment intents cleared" });
+  res.json({ message: merchantId ? "Your payment intents cleared" : "All payment intents cleared" });
 });
 
 app.post("/api/payment-intents/:id/start", async (req, res) => {
@@ -587,7 +822,8 @@ function updatePaymentIntentStatus(intentId, newStatus, options = {}) {
   };
 
   paymentIntents.set(intent.id, updated);
-  
+  void persistPaymentIntent(updated);
+
   // Update accounting when payment is settled
   if (newStatus === "SETTLED") {
     updateAccounting(updated);
@@ -1107,45 +1343,73 @@ app.delete("/api/accounting", (req, res) => {
   res.json({ message: "Accounting data reset" });
 });
 
+// Dashboard metrics from persisted transaction logs (per merchant)
+app.get("/api/transactions/stats", async (req, res) => {
+  const merchantId = await getMerchantUserIdFromRequest(req);
+  if (!merchantId) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  const period = (req.query.period || "all").toString();
+  const allowed = new Set(["all", "1day", "1month", "year"]);
+  const safePeriod = allowed.has(period) ? period : "all";
+
+  try {
+    let rows;
+    let source = "memory";
+    if (supabaseAdmin) {
+      rows = await fetchAllTransactionRowsForMerchant(merchantId);
+      source = "supabase";
+    } else {
+      rows = buildInMemoryTransactionRowsForMerchant(merchantId);
+    }
+    const stats = aggregateTransactionLogStats(rows, safePeriod);
+    return res.json({ ...stats, source });
+  } catch (err) {
+    console.error("[Transactions/stats]", err.message);
+    return res.status(500).json({ error: "Failed to compute stats" });
+  }
+});
+
 // Transactions from Supabase (or fallback to in-memory when Supabase not configured)
 app.get("/api/transactions", async (req, res) => {
   const paymentIntentId = req.query.payment_intent_id;
   const intent = paymentIntentId ? paymentIntents.get(paymentIntentId) : null;
+  const merchantId = await getMerchantUserIdFromRequest(req);
 
   if (supabaseAdmin) {
     try {
-      let query = supabaseAdmin.from("transactions").select("*").order("timestamp", { ascending: true });
+      let query;
       if (paymentIntentId) {
-        query = query.eq("payment_intent_id", paymentIntentId);
+        query = supabaseAdmin
+          .from("transactions")
+          .select("*")
+          .eq("payment_intent_id", paymentIntentId)
+          .order("timestamp", { ascending: true });
       } else {
-        query = query.limit(100).order("timestamp", { ascending: false });
+        query = supabaseAdmin
+          .from("transactions")
+          .select("*")
+          .order("timestamp", { ascending: false })
+          .limit(200);
+        if (merchantId) query = query.eq("merchant_user_id", merchantId);
       }
       const { data, error } = await query;
       if (error) throw error;
 
-      const mapRow = (row) => ({
-        id: row.event_id || row.id,
-        type: row.type,
-        timestamp: row.timestamp,
-        paymentIntentId: row.payment_intent_id,
-        orderId: row.order_id,
-        status: row.status,
-        provider: row.provider,
-        amount: row.amount,
-        currency: row.currency,
-        iso20022_meta: row.iso20022_meta,
-        settlementRef: row.settlement_ref,
-        completedAt: row.completed_at,
-      });
+      if (paymentIntentId && merchantId && data?.length) {
+        const foreign = data.some((r) => r.merchant_user_id && r.merchant_user_id !== merchantId);
+        if (foreign) return res.status(403).json({ error: "Forbidden" });
+      }
 
-      if (paymentIntentId && intent) {
+      if (paymentIntentId) {
         return res.json({
           paymentIntentId,
-          currentStatus: intent.status,
-          events: (data || []).map(mapRow),
+          currentStatus: intent?.status || (data?.length ? data[data.length - 1]?.status : null) || "UNKNOWN",
+          events: (data || []).map(mapTransactionRow),
         });
       }
-      return res.json((data || []).map(mapRow));
+      return res.json((data || []).map(mapTransactionRow));
     } catch (err) {
       console.error("[Transactions] Failed to fetch from Supabase:", err.message);
     }
@@ -1170,9 +1434,7 @@ app.get("/api/transactions", async (req, res) => {
 app.get("/api/demo/logs/payment-intent/:id/events", async (req, res) => {
   const intentId = req.params.id;
   const intent = paymentIntents.get(intentId);
-  if (!intent) {
-    return res.status(404).json({ error: "Payment intent not found" });
-  }
+  const merchantId = await getMerchantUserIdFromRequest(req);
 
   if (supabaseAdmin) {
     try {
@@ -1182,27 +1444,29 @@ app.get("/api/demo/logs/payment-intent/:id/events", async (req, res) => {
         .eq("payment_intent_id", intentId)
         .order("timestamp", { ascending: true });
       if (error) throw error;
-      return res.json({
-        paymentIntentId: intentId,
-        currentStatus: intent.status,
-        events: (data || []).map((row) => ({
-          id: row.event_id || row.id,
-          type: row.type,
-          timestamp: row.timestamp,
-          paymentIntentId: row.payment_intent_id,
-          orderId: row.order_id,
-          status: row.status,
-          provider: row.provider,
-          amount: row.amount,
-          currency: row.currency,
-          iso20022_meta: row.iso20022_meta,
-          settlementRef: row.settlement_ref,
-          completedAt: row.completed_at,
-        })),
-      });
+      if (data?.length) {
+        if (merchantId) {
+          const forbidden = data.some((r) => r.merchant_user_id && r.merchant_user_id !== merchantId);
+          if (forbidden) return res.status(403).json({ error: "Forbidden" });
+        }
+        const last = data[data.length - 1];
+        return res.json({
+          paymentIntentId: intentId,
+          currentStatus: intent?.status || last?.status || "UNKNOWN",
+          events: data.map(mapTransactionRow),
+        });
+      }
     } catch (err) {
       console.error("[Transactions] Failed to fetch from Supabase:", err.message);
     }
+  }
+
+  if (!intent) {
+    return res.status(404).json({ error: "Payment intent not found" });
+  }
+
+  if (merchantId && intent.merchant_user_id && intent.merchant_user_id !== merchantId) {
+    return res.status(403).json({ error: "Forbidden" });
   }
 
   const events = paymentIntentEvents.get(intentId) || [];
@@ -1558,22 +1822,31 @@ app.delete("/api/whatsapp/disconnect", (_req, res) => {
 
 // ─── Server Start ────────────────────────────────────────────────────────────
 
-app.listen(port, () => {
-  console.log(`Mock payment API listening on http://localhost:${port}`);
-  // Webhook events log is cleared on server restart (in-memory storage)
-  console.log(`Webhook events log initialized (empty, will log up to ${MAX_EVENTS} events)`);
-  console.log(`Invoice reminder system active (${INVOICE_DUE_DAYS}-day due period, ${MAX_REMINDERS_DEFAULT} max reminders)`);
-  if (whatsappConfig.connected) {
-    console.log(`WhatsApp Business connected (WABA: ${whatsappConfig.wabaId})`);
-  } else {
-    console.log(`WhatsApp Business not connected. Reminders will use manual wa.me fallback.`);
-  }
-  if (hasStitchConfig()) {
-    warmUpToken().catch((err) =>
-      console.error("Stitch warm-up failed", err.message || err)
-    );
-  } else {
-    console.warn("Stitch env vars not set; Stitch integration is disabled.");
-  }
+async function start() {
+  await loadPaymentIntentsFromSupabase();
+
+  app.listen(port, () => {
+    console.log(`Mock payment API listening on http://localhost:${port}`);
+    // Webhook events log is cleared on server restart (in-memory storage)
+    console.log(`Webhook events log initialized (empty, will log up to ${MAX_EVENTS} events)`);
+    console.log(`Invoice reminder system active (${INVOICE_DUE_DAYS}-day due period, ${MAX_REMINDERS_DEFAULT} max reminders)`);
+    if (whatsappConfig.connected) {
+      console.log(`WhatsApp Business connected (WABA: ${whatsappConfig.wabaId})`);
+    } else {
+      console.log(`WhatsApp Business not connected. Reminders will use manual wa.me fallback.`);
+    }
+    if (hasStitchConfig()) {
+      warmUpToken().catch((err) =>
+        console.error("Stitch warm-up failed", err.message || err)
+      );
+    } else {
+      console.warn("Stitch env vars not set; Stitch integration is disabled.");
+    }
+  });
+}
+
+start().catch((err) => {
+  console.error("Server failed to start:", err);
+  process.exit(1);
 });
 

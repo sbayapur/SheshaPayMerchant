@@ -9,6 +9,7 @@
     "preview": "npm --prefix frontend run preview"
   },
   "devDependencies": {
-    "concurrently": "^9.2.1"
+    "concurrently": "^9.2.1",
+    "supabase": "^2.84.4"
   }
 }

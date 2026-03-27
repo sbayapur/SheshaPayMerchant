@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
 import { getApiBase } from "../lib/api.js";
+import { getAuthHeaders } from "../lib/apiAuth.js";
 import ReceiptItemsCard from "./ReceiptItemsCard.jsx";
 import PaymentsTable from "./PaymentsTable.jsx";
 import EmployeesView from "./EmployeesView.jsx";
@@ -90,6 +91,45 @@ function MerchantDashboard({
   const [showCreateInvoiceOptions, setShowCreateInvoiceOptions] = useState(false);
   const [pendingPayment, setPendingPayment] = useState(null);
   const [timePeriod, setTimePeriod] = useState("all"); // "all", "1day", "1month", "year"
+  const [logStats, setLogStats] = useState(null);
+  const [logStatsLoading, setLogStatsLoading] = useState(false);
+  const [logStatsUseFallback, setLogStatsUseFallback] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLogStatsLoading(true);
+      setLogStatsUseFallback(false);
+      try {
+        const headers = await getAuthHeaders();
+        const res = await fetch(
+          `${API_BASE}/api/transactions/stats?period=${encodeURIComponent(timePeriod)}`,
+          { headers }
+        );
+        if (cancelled) return;
+        if (res.status === 401) {
+          setLogStats(null);
+          setLogStatsUseFallback(true);
+          return;
+        }
+        if (!res.ok) throw new Error(`stats ${res.status}`);
+        const data = await res.json();
+        setLogStats(data);
+        setLogStatsUseFallback(false);
+      } catch (e) {
+        console.warn("Transaction log stats failed", e);
+        if (!cancelled) {
+          setLogStats(null);
+          setLogStatsUseFallback(true);
+        }
+      } finally {
+        if (!cancelled) setLogStatsLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [timePeriod, API_BASE, merchantPayments]);
 
   // Ref for portal target (modal overlays)
   const appRef = useRef(null);
@@ -296,7 +336,9 @@ function MerchantDashboard({
     setLogLoading(true);
     setLogEvents([]);
     try {
-      const res = await fetch(`${API_BASE}/api/demo/logs/payment-intent/${payment.id}/events`);
+      const res = await fetch(`${API_BASE}/api/demo/logs/payment-intent/${payment.id}/events`, {
+        headers: await getAuthHeaders(),
+      });
       if (res.ok) {
         const data = await res.json();
         setLogEvents(data.events || []);
@@ -471,7 +513,7 @@ function MerchantDashboard({
       const apiBase = API_BASE;
       const piRes = await fetch(`${apiBase}/api/payment-intents`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: await getAuthHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({
           amount: paymentToAdd.amount,
           currency: paymentToAdd.currency || "ZAR",
@@ -547,7 +589,7 @@ function MerchantDashboard({
       const apiBase = API_BASE;
       const piRes = await fetch(`${apiBase}/api/payment-intents`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: await getAuthHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({
           amount: paymentToAdd.amount,
           currency: paymentToAdd.currency || "ZAR",
@@ -656,6 +698,11 @@ function MerchantDashboard({
     p.status === "PENDING" || 
     (p.status !== "SETTLED" && p.status !== "succeeded" && p.status !== "FAILED")
   ).length;
+
+  const useLogMetrics = logStats && !logStatsUseFallback;
+  const metricTotalReceived = useLogMetrics ? logStats.totalReceived : filteredTotalVolume;
+  const metricSettledCountDisplayed = useLogMetrics ? logStats.settledCount : filteredSettledCount;
+  const metricPendingCountDisplayed = useLogMetrics ? logStats.pendingCount : filteredPendingCount;
 
   return (
     <div className="app" ref={appRef}>
@@ -912,23 +959,42 @@ function MerchantDashboard({
               </button>
             </div>
 
+            {!logStatsLoading && useLogMetrics && (
+              <p
+                className="metric-hint"
+                style={{ fontSize: "0.8rem", color: "var(--text-secondary)", margin: "0 0 12px" }}
+              >
+                Totals from your transaction log (same period as above).
+              </p>
+            )}
+            {!logStatsLoading && logStatsUseFallback && (
+              <p
+                className="metric-hint"
+                style={{ fontSize: "0.8rem", color: "var(--text-secondary)", margin: "0 0 12px" }}
+              >
+                Log-based stats unavailable; showing figures from the order list.
+              </p>
+            )}
+
             <div className="metrics">
               <div className="metric">
                 <p className="metric-label">Total received</p>
                 <p className="metric-value">
-                  {currencySymbol} {filteredTotalVolume.toFixed(2)}
+                  {logStatsLoading
+                    ? "—"
+                    : `${currencySymbol} ${Number(metricTotalReceived).toFixed(2)}`}
                 </p>
               </div>
               <div className="metric">
                 <p className="metric-label">Settled payments</p>
                 <p className="metric-value">
-                  {filteredSettledCount}
+                  {logStatsLoading ? "—" : metricSettledCountDisplayed}
                 </p>
               </div>
               <div className="metric">
                 <p className="metric-label">Pending</p>
                 <p className="metric-value">
-                  {filteredPendingCount}
+                  {logStatsLoading ? "—" : metricPendingCountDisplayed}
                 </p>
               </div>
             </div>

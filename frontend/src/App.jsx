@@ -8,6 +8,7 @@ import CheckoutView from "./components/CheckoutView.jsx";
 import SuccessView from "./components/SuccessView.jsx";
 import { supabase } from "./lib/supabase.js";
 import { getApiBase } from "./lib/api.js";
+import { getAuthHeaders } from "./lib/apiAuth.js";
 import { sessionRequiresNewPassword } from "./lib/authRecovery.js";
 
 const API_BASE = getApiBase();
@@ -253,7 +254,9 @@ function App() {
     setPaymentsLoading(true);
     setPaymentsError("");
     try {
-      const res = await fetch(`${API_BASE}/api/payment-intents`);
+      const res = await fetch(`${API_BASE}/api/payment-intents`, {
+        headers: await getAuthHeaders(),
+      });
       if (!res.ok) throw new Error(`Request failed with ${res.status}`);
       const data = await res.json();
       const normalized = Array.isArray(data)
@@ -398,18 +401,6 @@ function App() {
       showToast("Failed to delete employee", "error");
     }
   };
-
-  // Clear all orders on app mount (page reload)
-  useEffect(() => {
-    const clearOrders = async () => {
-      try {
-        await fetch(`${API_BASE}/api/payment-intents`, { method: "DELETE" });
-      } catch (err) {
-        console.warn("Failed to clear orders:", err);
-      }
-    };
-    clearOrders();
-  }, []); // Only run on mount
 
   // Load payment intents and employees when viewing merchant dashboard
   useEffect(() => {
@@ -850,7 +841,9 @@ function App() {
     setPaymentsLoading(true);
     setPaymentsError("");
     try {
-      const res = await fetch(`${API_BASE}/api/payment-intents`);
+      const res = await fetch(`${API_BASE}/api/payment-intents`, {
+        headers: await getAuthHeaders(),
+      });
       if (!res.ok) throw new Error(`Request failed with ${res.status}`);
       const data = await res.json();
       const normalized = Array.isArray(data)
