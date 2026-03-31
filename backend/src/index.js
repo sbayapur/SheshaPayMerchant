@@ -640,7 +640,11 @@ function findInvoiceByPaymentIntent(intentId) {
 }
 
 app.get("/health", (_req, res) => {
-  res.json({ ok: true });
+  res.json({
+    ok: true,
+    // Helps smoke-test App Runner: service role + URL must be set or inserts never reach Supabase
+    supabaseConfigured: Boolean(supabaseAdmin),
+  });
 });
 
 app.post("/api/bank-link", (req, res) => {
@@ -764,15 +768,23 @@ app.post("/api/payment-intents/:id/start", async (req, res) => {
   }
 
   try {
-    const providerResponse = await startPayment(intent);
-    const redirectUrl = providerResponse?.redirectUrl;
-
-    if (!redirectUrl) {
-      throw new Error("redirectUrl missing from provider response");
+    let redirectUrl = null;
+    if (hasStitchConfig()) {
+      const providerResponse = await startPayment(intent);
+      redirectUrl = providerResponse?.redirectUrl;
+      if (!redirectUrl) {
+        throw new Error("redirectUrl missing from provider response");
+      }
+    } else {
+      console.warn(
+        "[Payments] STITCH_CLIENT_ID/SECRET not set — demo start (no Stitch redirect). Set Stitch env for live PayShap."
+      );
     }
 
     // Update to AUTHORISED when payment is started (bank auth completed)
-    const updated = updatePaymentIntentStatus(intent.id, "AUTHORISED");
+    const updated = updatePaymentIntentStatus(intent.id, "AUTHORISED", {
+      provider: hasStitchConfig() ? undefined : "demo",
+    });
     if (!updated) {
       return res.status(500).json({ error: "Failed to update payment intent" });
     }
@@ -780,12 +792,13 @@ app.post("/api/payment-intents/:id/start", async (req, res) => {
     // Add redirectUrl and startedAt to the updated intent
     const finalUpdated = {
       ...updated,
-      redirectUrl,
+      ...(redirectUrl && { redirectUrl }),
       startedAt: new Date().toISOString(),
     };
     paymentIntents.set(intent.id, finalUpdated);
-    
-    res.json({ redirectUrl, status: finalUpdated.status });
+    void persistPaymentIntent(finalUpdated);
+
+    res.json({ redirectUrl: redirectUrl || null, status: finalUpdated.status });
   } catch (err) {
     console.error("Failed to start payment intent", err);
     res

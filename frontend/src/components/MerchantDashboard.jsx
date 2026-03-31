@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
 import { getApiBase } from "../lib/api.js";
 import { getAuthHeaders } from "../lib/apiAuth.js";
+import { supabase } from "../lib/supabase.js";
 import ReceiptItemsCard from "./ReceiptItemsCard.jsx";
 import PaymentsTable from "./PaymentsTable.jsx";
 import EmployeesView from "./EmployeesView.jsx";
@@ -94,14 +95,45 @@ function MerchantDashboard({
   const [logStats, setLogStats] = useState(null);
   const [logStatsLoading, setLogStatsLoading] = useState(false);
   const [logStatsUseFallback, setLogStatsUseFallback] = useState(false);
+  /** Bumps when Supabase session is ready so /api/transactions/stats gets Authorization (avoids 401 race on load). */
+  const [authReadyTick, setAuthReadyTick] = useState(0);
 
   useEffect(() => {
+    if (!supabase) {
+      setAuthReadyTick(1);
+      return undefined;
+    }
+    let cancelled = false;
+    supabase.auth.getSession().then(() => {
+      if (!cancelled) setAuthReadyTick((t) => t + 1);
+    });
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange(() => {
+      setAuthReadyTick((t) => t + 1);
+    });
+    return () => {
+      cancelled = true;
+      subscription.unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!authReadyTick) return;
     let cancelled = false;
     (async () => {
       setLogStatsLoading(true);
       setLogStatsUseFallback(false);
       try {
         const headers = await getAuthHeaders();
+        if (!headers.Authorization) {
+          if (!cancelled) {
+            setLogStats(null);
+            setLogStatsUseFallback(true);
+            setLogStatsLoading(false);
+          }
+          return;
+        }
         const res = await fetch(
           `${API_BASE}/api/transactions/stats?period=${encodeURIComponent(timePeriod)}`,
           { headers }
@@ -129,7 +161,7 @@ function MerchantDashboard({
     return () => {
       cancelled = true;
     };
-  }, [timePeriod, API_BASE, merchantPayments]);
+  }, [timePeriod, API_BASE, merchantPayments, authReadyTick]);
 
   // Ref for portal target (modal overlays)
   const appRef = useRef(null);
