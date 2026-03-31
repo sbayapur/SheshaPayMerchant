@@ -203,6 +203,14 @@ function App() {
       return;
     }
 
+    const payToken = getPaymentTokenFromPath();
+    if (
+      payToken &&
+      (linkLoading || linkExpired || !customerLinkPayment)
+    ) {
+      return;
+    }
+
     const createIntent = async () => {
       try {
         const computedAmount = total;
@@ -222,6 +230,9 @@ function App() {
             description:
               customerLinkPayment?.note || "Sunrise Salon order",
             orderId: customerLinkPayment?.orderId, // Include orderId so it can be matched later
+            ...(customerLinkPayment?.paymentLinkToken && {
+              paymentLinkToken: customerLinkPayment.paymentLinkToken,
+            }),
           }),
         });
 
@@ -248,7 +259,7 @@ function App() {
 
     createIntent();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [customerLinkPayment, view]); // Only recreate when customerLinkPayment or view changes, not when items/total change
+  }, [customerLinkPayment, view, linkLoading, linkExpired]); // Wait for /pay/:token data before POST (so merchant_user_id can attach)
 
   const fetchIntents = async () => {
     setPaymentsLoading(true);
@@ -477,6 +488,9 @@ function App() {
               currency: "ZAR",
               description: customerLinkPayment?.note || "Sunrise Salon order",
               orderId: customerLinkPayment.orderId,
+              ...(customerLinkPayment?.paymentLinkToken && {
+                paymentLinkToken: customerLinkPayment.paymentLinkToken,
+              }),
             }),
           });
           if (res.ok) {
@@ -766,7 +780,7 @@ function App() {
       : (import.meta.env.VITE_CUSTOMER_BASE_URL || "https://demo.shesha").replace(/\/+$/, "");
     const res = await fetch(`${API_BASE}/api/payment-links`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: await getAuthHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({
         orderId: payment.id,
         amount: payment.amount,
@@ -997,6 +1011,7 @@ function App() {
               note: data.note || "",
               isoRef: data.isoRef || (data.orderId ? `SHESHA-${data.orderId}` : null),
               items: data.items || [],
+              paymentLinkToken: token,
             });
             setLinkExpired(false);
           }

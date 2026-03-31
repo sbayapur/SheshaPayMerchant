@@ -54,7 +54,7 @@ function MerchantDashboard({
     try {
       const res = await fetch(`${API_BASE}/api/payment-links`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: await getAuthHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({
           orderId: payment.id,
           amount: payment.amount,

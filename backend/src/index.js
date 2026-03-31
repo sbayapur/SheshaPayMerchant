@@ -664,12 +664,27 @@ app.post("/api/bank-link", (req, res) => {
 });
 
 app.post("/api/payment-intents", async (req, res) => {
-  const { amount, currency = "ZAR", description = "", orderId } = req.body || {};
+  const {
+    amount,
+    currency = "ZAR",
+    description = "",
+    orderId,
+    paymentLinkToken,
+  } = req.body || {};
   if (!amount) {
     return res.status(400).json({ error: "amount is required" });
   }
 
-  const merchant_user_id = (await getMerchantUserIdFromRequest(req)) || undefined;
+  let merchant_user_id = (await getMerchantUserIdFromRequest(req)) || undefined;
+  if (!merchant_user_id && paymentLinkToken) {
+    const link = paymentLinks.get(paymentLinkToken);
+    if (
+      link?.merchant_user_id &&
+      (!orderId || String(link.orderId) === String(orderId))
+    ) {
+      merchant_user_id = link.merchant_user_id;
+    }
+  }
 
   const id = randomUUID();
   const orderIdToUse = orderId || id;
@@ -1496,7 +1511,7 @@ app.get("/api/demo/logs/payment-intent/:id/events", async (req, res) => {
 // ─── Payment Link Tokens (Secure Deep Links) ─────────────────────────────────
 
 // Create a new payment link (returns token + url)
-app.post("/api/payment-links", (req, res) => {
+app.post("/api/payment-links", async (req, res) => {
   const {
     orderId,
     amount,
@@ -1514,6 +1529,8 @@ app.post("/api/payment-links", (req, res) => {
       .json({ error: "orderId and positive amount are required" });
   }
 
+  const merchant_user_id = (await getMerchantUserIdFromRequest(req)) || null;
+
   const token = generatePaymentLinkToken();
   const now = new Date();
   const expiresAt = new Date(now.getTime() + PAYMENT_LINK_TTL_DAYS * 24 * 60 * 60 * 1000);
@@ -1530,6 +1547,7 @@ app.post("/api/payment-links", (req, res) => {
     createdAt: now.toISOString(),
     expiresAt: expiresAt.toISOString(),
     invoiceId: invoiceId || null,
+    ...(merchant_user_id && { merchant_user_id }),
   };
 
   paymentLinks.set(token, linkData);
