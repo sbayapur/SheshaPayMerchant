@@ -8,6 +8,15 @@ import { startPayment } from "./paymentsProvider.js";
 import { warmUpToken, hasStitchConfig } from "./stitchClient.js";
 import { supabaseAdmin } from "./supabaseClient.js";
 import { getMerchantUserIdFromRequest } from "./merchantAuth.js";
+import {
+  listCustomersForMerchant,
+  listMerchantOrdersForMerchant,
+  markMerchantOrdersCancelledForInvoiceId,
+  markMerchantOrdersPaidForIntent,
+  markMerchantOrdersPaidForInvoiceId,
+  syncInvoiceToPersistedStores,
+} from "./orderHistoryStore.js";
+import { registerMerchantAdminPinRoutes } from "./merchantAdminPin.js";
 
 const app = express();
 // App Runner / ALB send X-Forwarded-For; express-rate-limit requires this or it throws (ERR_ERL_UNEXPECTED_X_FORWARDED_FOR)
@@ -621,6 +630,8 @@ function markInvoicePaid(invoiceId) {
   invoice.paidAt = new Date().toISOString();
   invoices.set(invoiceId, invoice);
 
+  void markMerchantOrdersPaidForInvoiceId(invoiceId);
+
   // Cancel any pending reminder timer
   if (invoiceTimers.has(invoiceId)) {
     clearTimeout(invoiceTimers.get(invoiceId));
@@ -857,6 +868,8 @@ function updatePaymentIntentStatus(intentId, newStatus, options = {}) {
   // Update accounting when payment is settled
   if (newStatus === "SETTLED") {
     updateAccounting(updated);
+
+    void markMerchantOrdersPaidForIntent(updated);
 
     // Auto-mark linked invoice as PAID and cancel reminder timer
     const linkedInvoice = findInvoiceByPaymentIntent(intent.id) || findInvoiceByPaymentIntent(intent.orderId);
@@ -1594,12 +1607,13 @@ app.get("/api/pay/:token", payTokenRateLimiter, (req, res) => {
 // ─── Invoice Endpoints ───────────────────────────────────────────────────────
 
 // Create a new invoice
-app.post("/api/invoices", (req, res) => {
+app.post("/api/invoices", async (req, res) => {
   const {
     paymentIntentId,
     orderId,
     customerPhone,
     customerName = "",
+    customerAuthUserId = null,
     merchantName = "Sunrise Salon",
     amount,
     subtotal,
@@ -1609,6 +1623,8 @@ app.post("/api/invoices", (req, res) => {
     description = "",
     checkoutLink = "",
   } = req.body || {};
+
+  const merchantUserIdPersist = (await getMerchantUserIdFromRequest(req)) || null;
 
   if (!amount || amount <= 0) {
     return res.status(400).json({ error: "amount is required and must be positive" });
@@ -1655,6 +1671,7 @@ app.post("/api/invoices", (req, res) => {
     merchantName,
     customerPhone,
     customerName,
+    ...(customerAuthUserId && { customerAuthUserId }),
     amount: Number(amount),
     subtotal: Number(computedSubtotal),
     taxAmount: Number(computedTax),
@@ -1678,8 +1695,51 @@ app.post("/api/invoices", (req, res) => {
   // Schedule the first reminder timer (fires at dueDate)
   scheduleInvoiceReminder(invoice);
 
+  if (merchantUserIdPersist) {
+    void syncInvoiceToPersistedStores({
+      merchantUserId: merchantUserIdPersist,
+      invoice,
+      paymentIntentId,
+    });
+  }
+
   console.log(`[Invoice] Created ${invoiceId} for ${customerPhone}, due ${dueDate.toISOString()}`);
   res.status(201).json(invoice);
+});
+
+// Durable order history + customers (Supabase), scoped to logged-in merchant
+app.get("/api/merchant-orders", async (req, res) => {
+  const merchantId = await getMerchantUserIdFromRequest(req);
+  if (!merchantId) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  if (!supabaseAdmin) {
+    return res.json([]);
+  }
+  try {
+    const rows = await listMerchantOrdersForMerchant(merchantId);
+    res.json(rows);
+  } catch (err) {
+    console.error("[merchant-orders]", err);
+    res.status(500).json({ error: "Failed to load order history" });
+  }
+});
+
+app.get("/api/customers", async (req, res) => {
+  const merchantId = await getMerchantUserIdFromRequest(req);
+  if (!merchantId) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  if (!supabaseAdmin) {
+    return res.json([]);
+  }
+  try {
+    const rows = await listCustomersForMerchant(merchantId);
+    res.json(rows);
+  } catch (err) {
+    console.error("[customers]", err);
+    res.status(500).json({ error: "Failed to load customers" });
+  }
 });
 
 // List all invoices (with optional ?status= filter)
@@ -1746,6 +1806,7 @@ app.patch("/api/invoices/:id", (req, res) => {
   if (status === "CANCELLED") {
     invoice.status = "CANCELLED";
     invoice.cancelledAt = new Date().toISOString();
+    void markMerchantOrdersCancelledForInvoiceId(invoice.id);
     // Cancel any pending reminder timer
     if (invoiceTimers.has(invoice.id)) {
       clearTimeout(invoiceTimers.get(invoice.id));
@@ -1851,6 +1912,11 @@ app.delete("/api/whatsapp/disconnect", (_req, res) => {
 
   console.log("[WhatsApp] Disconnected.");
   res.json({ ok: true, connected: false });
+});
+
+registerMerchantAdminPinRoutes(app, {
+  getMerchantUserIdFromRequest,
+  supabaseAdmin,
 });
 
 // ─── Server Start ────────────────────────────────────────────────────────────

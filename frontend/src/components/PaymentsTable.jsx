@@ -24,6 +24,19 @@ function PaymentsTable({
     return invoicesMap[payment.id] || invoicesMap[payment.orderId] || null;
   };
 
+  const getCustomerLabel = (payment) => {
+    const invoice = getInvoice(payment);
+    if (invoice?.customerPhone) {
+      return invoice.customerName
+        ? `${invoice.customerName} · ${invoice.customerPhone}`
+        : invoice.customerPhone;
+    }
+    if (payment.savedCustomerName || payment.savedCustomerPhone) {
+      return [payment.savedCustomerName, payment.savedCustomerPhone].filter(Boolean).join(" · ");
+    }
+    return "—";
+  };
+
   // Determine effective status label (includes OVERDUE from invoice)
   const getEffectiveStatusLabel = (payment) => {
     const invoice = getInvoice(payment);
@@ -61,11 +74,13 @@ function PaymentsTable({
             <span className="payments-header-cell">Amount</span>
             <span className="payments-header-cell">Status</span>
             <span className="payments-header-cell">Description</span>
+            <span className="payments-header-cell">Customer</span>
             <span className="payments-header-cell">Created</span>
             <span className="payments-header-cell">Actions</span>
           </div>
           {loading && (
             <div className="payments-row">
+              <span className="skeleton">&nbsp;</span>
               <span className="skeleton">&nbsp;</span>
               <span className="skeleton">&nbsp;</span>
               <span className="skeleton">&nbsp;</span>
@@ -88,8 +103,8 @@ function PaymentsTable({
             const invoice = getInvoice(p);
             const isOverdue = invoice && invoice.status === "OVERDUE";
             const hasInvoice = !!invoice;
-            const isPending = p.status === "PENDING" || p.status === "AUTHORISED" || p.status === "requires_action";
             const isNotSettled = p.status !== "SETTLED" && p.status !== "succeeded";
+            const persistedOnly = Boolean(p.fromPersistedOnly);
 
             return (
               <div key={p.id}>
@@ -115,6 +130,12 @@ function PaymentsTable({
                     )}
                   </span>
                   <span className="payments-cell">{p.description || "N/A"}</span>
+                  <span
+                    className="payments-cell"
+                    style={{ textAlign: "center", lineHeight: 1.25 }}
+                  >
+                    {getCustomerLabel(p)}
+                  </span>
                   <span className="payments-cell">
                     {p.createdAt ? new Date(p.createdAt).toLocaleString() : "N/A"}
                   </span>
@@ -124,7 +145,7 @@ function PaymentsTable({
                         className="ghost-button"
                         type="button"
                         onClick={() => onViewQr(p)}
-                        disabled={!p.id}
+                        disabled={!p.id || persistedOnly}
                       >
                         Show QR
                       </button>
@@ -133,7 +154,7 @@ function PaymentsTable({
                           className="ghost-button"
                           type="button"
                           onClick={() => onSendInvoice(p)}
-                          disabled={!p.id}
+                          disabled={!p.id || persistedOnly}
                         >
                           Send Invoice
                         </button>
@@ -143,7 +164,7 @@ function PaymentsTable({
                           className="ghost-button"
                           type="button"
                           onClick={() => onSendReminder(p)}
-                          disabled={!p.id}
+                          disabled={!p.id || persistedOnly}
                           style={isOverdue ? {
                             color: "#dc2626",
                             borderColor: "#fecaca",

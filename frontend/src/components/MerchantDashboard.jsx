@@ -23,6 +23,7 @@ function MerchantDashboard({
   onPresetAdd,
   onItemChange,
   onRemoveItem,
+  onClearReceiptItems,
   receiptTotal,
   receiptSubtotal,
   receiptTax,
@@ -83,6 +84,11 @@ function MerchantDashboard({
   const [selectedBank, setSelectedBank] = useState("");
   const [isAuthenticating, setIsAuthenticating] = useState(false);
   const [showPinModal, setShowPinModal] = useState(false);
+  /** loading | unavailable | verify | create1 | create2 | change1 | change2 | change3 */
+  const [pinEntryMode, setPinEntryMode] = useState("verify");
+  const [pinFirstForConfirm, setPinFirstForConfirm] = useState("");
+  const [pinSubmitting, setPinSubmitting] = useState(false);
+  const changeCurrentPinRef = useRef("");
   const [pinValue, setPinValue] = useState("");
   const [pinVerified, setPinVerified] = useState(false);
   const [pinError, setPinError] = useState("");
@@ -432,24 +438,246 @@ function MerchantDashboard({
     }
   };
 
-  const handlePinSubmit = (e) => {
+  const openAdminPinFlow = useCallback(async () => {
+    if (pinVerified) {
+      setCurrentMode("admin");
+      return;
+    }
+    setShowPinModal(true);
+    setPinValue("");
+    setPinError("");
+    setPinFirstForConfirm("");
+    changeCurrentPinRef.current = "";
+    setPinEntryMode("loading");
+    try {
+      const res = await fetch(`${API_BASE}/api/merchant/admin-pin/status`, {
+        headers: await getAuthHeaders(),
+      });
+      const data = res.ok ? await res.json() : {};
+      if (data.storageAvailable === false) {
+        setPinEntryMode("unavailable");
+        return;
+      }
+      if (!data.configured) {
+        setPinEntryMode("create1");
+      } else {
+        setPinEntryMode("verify");
+      }
+    } catch {
+      setPinEntryMode("unavailable");
+    }
+  }, [API_BASE, pinVerified]);
+
+  const openChangeAdminPinFlow = useCallback(() => {
+    setShowPinModal(true);
+    setPinValue("");
+    setPinError("");
+    setPinFirstForConfirm("");
+    changeCurrentPinRef.current = "";
+    setPinEntryMode("change1");
+  }, []);
+
+  const handlePinPrimary = async (e) => {
     e.preventDefault();
     setPinError("");
-    
-    // For demo: accept any PIN (or you can set a specific PIN like "1234")
-    if (pinValue.length >= 4) {
-      setPinVerified(true);
-      setShowPinModal(false);
-      setCurrentMode("admin");
+    if (pinSubmitting) return;
+    if (pinValue.length < 4) {
+      setPinError("Enter 4 digits");
+      return;
+    }
+
+    if (pinEntryMode === "verify") {
+      setPinSubmitting(true);
+      try {
+        const res = await fetch(`${API_BASE}/api/merchant/admin-pin/verify`, {
+          method: "POST",
+          headers: await getAuthHeaders({ "Content-Type": "application/json" }),
+          body: JSON.stringify({ pin: pinValue }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          setPinError(data.error || "Incorrect PIN");
+          setPinValue("");
+          return;
+        }
+        setPinVerified(true);
+        setShowPinModal(false);
+        setCurrentMode("admin");
+        setPinValue("");
+      } catch {
+        setPinError("Could not verify PIN");
+        setPinValue("");
+      } finally {
+        setPinSubmitting(false);
+      }
+      return;
+    }
+
+    if (pinEntryMode === "create1") {
+      setPinFirstForConfirm(pinValue);
       setPinValue("");
-    } else {
-      setPinError("PIN must be at least 4 digits");
+      setPinEntryMode("create2");
+      return;
+    }
+
+    if (pinEntryMode === "create2") {
+      if (pinValue !== pinFirstForConfirm) {
+        setPinError("PINs do not match");
+        setPinValue("");
+        return;
+      }
+      setPinSubmitting(true);
+      try {
+        const res = await fetch(`${API_BASE}/api/merchant/admin-pin`, {
+          method: "PUT",
+          headers: await getAuthHeaders({ "Content-Type": "application/json" }),
+          body: JSON.stringify({ pin: pinValue }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          setPinError(data.error || "Could not save PIN");
+          setPinValue("");
+          return;
+        }
+        setPinVerified(true);
+        setShowPinModal(false);
+        setCurrentMode("admin");
+        setPinValue("");
+        setPinFirstForConfirm("");
+      } catch {
+        setPinError("Could not save PIN");
+        setPinValue("");
+      } finally {
+        setPinSubmitting(false);
+      }
+      return;
+    }
+
+    if (pinEntryMode === "change1") {
+      setPinSubmitting(true);
+      try {
+        const res = await fetch(`${API_BASE}/api/merchant/admin-pin/verify`, {
+          method: "POST",
+          headers: await getAuthHeaders({ "Content-Type": "application/json" }),
+          body: JSON.stringify({ pin: pinValue }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          setPinError(data.error || "Incorrect PIN");
+          setPinValue("");
+          return;
+        }
+        changeCurrentPinRef.current = pinValue;
+        setPinValue("");
+        setPinEntryMode("change2");
+      } catch {
+        setPinError("Could not verify PIN");
+        setPinValue("");
+      } finally {
+        setPinSubmitting(false);
+      }
+      return;
+    }
+
+    if (pinEntryMode === "change2") {
+      setPinFirstForConfirm(pinValue);
+      setPinValue("");
+      setPinEntryMode("change3");
+      return;
+    }
+
+    if (pinEntryMode === "change3") {
+      if (pinValue !== pinFirstForConfirm) {
+        setPinError("New PINs do not match");
+        setPinValue("");
+        return;
+      }
+      setPinSubmitting(true);
+      try {
+        const res = await fetch(`${API_BASE}/api/merchant/admin-pin`, {
+          method: "PUT",
+          headers: await getAuthHeaders({ "Content-Type": "application/json" }),
+          body: JSON.stringify({
+            pin: pinValue,
+            currentPin: changeCurrentPinRef.current,
+          }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          setPinError(data.error || "Could not update PIN");
+          setPinValue("");
+          return;
+        }
+        setShowPinModal(false);
+        setPinValue("");
+        setPinFirstForConfirm("");
+        changeCurrentPinRef.current = "";
+      } catch {
+        setPinError("Could not update PIN");
+        setPinValue("");
+      } finally {
+        setPinSubmitting(false);
+      }
     }
   };
 
   const handleClosePinModal = () => {
     setShowPinModal(false);
     setPinValue("");
+    setPinError("");
+    setPinFirstForConfirm("");
+    changeCurrentPinRef.current = "";
+    setPinEntryMode("verify");
+  };
+
+  const pinModalTitle =
+    pinEntryMode === "loading"
+      ? "Admin PIN"
+      : pinEntryMode === "unavailable"
+        ? "Admin PIN unavailable"
+        : pinEntryMode === "verify"
+          ? "Enter Admin PIN"
+          : pinEntryMode === "create1"
+            ? "Create Admin PIN"
+            : pinEntryMode === "create2"
+              ? "Confirm Admin PIN"
+              : pinEntryMode === "change1"
+                ? "Current Admin PIN"
+                : pinEntryMode === "change2"
+                  ? "New Admin PIN"
+                  : "Confirm New Admin PIN";
+
+  const pinPrimaryLabel =
+    pinEntryMode === "verify"
+      ? pinSubmitting
+        ? "Verifying…"
+        : "Verify PIN"
+      : pinEntryMode === "create1"
+        ? "Continue"
+        : pinEntryMode === "create2"
+          ? pinSubmitting
+            ? "Saving…"
+            : "Save PIN"
+          : pinEntryMode === "change1"
+            ? pinSubmitting
+              ? "Checking…"
+              : "Continue"
+            : pinEntryMode === "change2"
+              ? "Continue"
+              : pinEntryMode === "change3"
+                ? pinSubmitting
+                  ? "Saving…"
+                  : "Save new PIN"
+                : "Close";
+
+  const pinKeypadEnabled =
+    pinEntryMode !== "loading" &&
+    pinEntryMode !== "unavailable" &&
+    !pinSubmitting;
+
+  const appendPinDigit = (digit) => {
+    if (!pinKeypadEnabled || pinValue.length >= 4) return;
+    setPinValue((v) => v + digit);
     setPinError("");
   };
 
@@ -570,7 +798,7 @@ function MerchantDashboard({
           const apiBase = API_BASE;
           await fetch(`${apiBase}/api/invoices`, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: await getAuthHeaders({ "Content-Type": "application/json" }),
             body: JSON.stringify({
               paymentIntentId,
               orderId: paymentToAdd.id,
@@ -604,6 +832,10 @@ function MerchantDashboard({
     // Generate QR
     if (onGenerateQr) {
       onGenerateQr(paymentToAdd);
+    }
+
+    if (onClearReceiptItems) {
+      onClearReceiptItems();
     }
   };
 
@@ -645,7 +877,7 @@ function MerchantDashboard({
         const apiBase = API_BASE;
         await fetch(`${apiBase}/api/invoices`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: await getAuthHeaders({ "Content-Type": "application/json" }),
           body: JSON.stringify({
             paymentIntentId,
             orderId: paymentToAdd.id,
@@ -679,6 +911,10 @@ function MerchantDashboard({
     setSelectedPaymentForInvoice(paymentToAdd);
     setShowInvoiceModal(true);
     setInvoicePhoneNumber(phone);
+
+    if (onClearReceiptItems) {
+      onClearReceiptItems();
+    }
   };
 
   const handleCloseCreateInvoiceOptions = () => {
@@ -765,15 +1001,35 @@ function MerchantDashboard({
         {currentMode === "admin" ? (
           <>
             {/* Admin Mode Header + Tabs */}
-            <div style={{ display: "flex", alignItems: "center", gap: "12px", marginTop: "24px", marginBottom: "16px" }}>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "12px",
+                marginTop: "24px",
+                marginBottom: "16px",
+                flexWrap: "wrap",
+              }}
+            >
               <button
                 className="ghost-button"
-                onClick={() => setCurrentMode("dashboard")}
+                onClick={() => {
+                  setCurrentMode("dashboard");
+                  setPinVerified(false);
+                }}
                 style={{ fontSize: "0.85rem", padding: "6px 12px" }}
               >
                 ← Back
               </button>
               <h2 className="merchant-name" style={{ margin: 0, fontSize: "1.1rem" }}>Admin Mode</h2>
+              <button
+                type="button"
+                className="ghost-button"
+                onClick={openChangeAdminPinFlow}
+                style={{ fontSize: "0.85rem", padding: "6px 12px", marginLeft: "auto" }}
+              >
+                Change PIN
+              </button>
             </div>
             <div className="admin-tabs" style={{ marginBottom: "24px" }}>
               <button
@@ -942,13 +1198,7 @@ function MerchantDashboard({
                 onClick={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
-                  if (pinVerified) {
-                    setCurrentMode("admin");
-                  } else {
-                    setShowPinModal(true);
-                    setPinValue("");
-                    setPinError("");
-                  }
+                  void openAdminPinFlow();
                 }}
               >
                 Admin Mode
@@ -1169,6 +1419,9 @@ function MerchantDashboard({
                       setSelectedPaymentForInvoice(paymentToAdd);
                       setShowInvoiceModal(true);
                       setInvoicePhoneNumber("");
+                      if (onClearReceiptItems) {
+                        onClearReceiptItems();
+                      }
                     }}
                     style={{ width: "100%" }}
                   >
@@ -1325,7 +1578,7 @@ function MerchantDashboard({
           <div className="bank-auth-modal-overlay pin-modal-overlay" onClick={handleClosePinModal}>
             <div className="bank-auth-modal" onClick={(e) => e.stopPropagation()}>
               <div className="bank-auth-modal-header">
-                <h2 className="bank-auth-modal-title">Enter Admin PIN</h2>
+                <h2 className="bank-auth-modal-title">{pinModalTitle}</h2>
                 <button
                   className="bank-auth-modal-close"
                   onClick={handleClosePinModal}
@@ -1335,186 +1588,121 @@ function MerchantDashboard({
                 </button>
               </div>
               <div className="bank-auth-modal-content">
-                <form onSubmit={handlePinSubmit}>
-                  <div className="bank-auth-step" style={{ marginBottom: "0" }}>
-                    <label className="bank-auth-label" style={{ fontSize: "0.9rem", marginBottom: "8px" }}>
-                      Enter PIN
-                    </label>
-                    {/* PIN Display */}
-                    <div className="pin-display">
-                      {[0, 1, 2, 3].map((index) => (
-                        <div
-                          key={index}
-                          className={`pin-dot ${index < pinValue.length ? "filled" : ""}`}
-                        />
-                      ))}
+                {pinEntryMode === "loading" && (
+                  <p className="metric-label" style={{ textAlign: "center" }}>
+                    Loading your admin PIN settings…
+                  </p>
+                )}
+                {pinEntryMode === "unavailable" && (
+                  <>
+                    <p className="metric-label" style={{ textAlign: "center", lineHeight: 1.5 }}>
+                      Admin PIN needs Supabase on the server. Set{" "}
+                      <code style={{ fontSize: "0.75rem" }}>SUPABASE_URL</code> and{" "}
+                      <code style={{ fontSize: "0.75rem" }}>SUPABASE_SERVICE_ROLE_KEY</code> on the API,
+                      then create the <code style={{ fontSize: "0.75rem" }}>merchant_admin_pins</code> table.
+                    </p>
+                    <button
+                      type="button"
+                      className="bank-auth-button"
+                      onClick={handleClosePinModal}
+                      style={{ marginTop: "16px", padding: "12px" }}
+                    >
+                      Close
+                    </button>
+                  </>
+                )}
+                {pinEntryMode !== "loading" && pinEntryMode !== "unavailable" && (
+                  <form onSubmit={handlePinPrimary}>
+                    <div className="bank-auth-step" style={{ marginBottom: "0" }}>
+                      <label className="bank-auth-label" style={{ fontSize: "0.9rem", marginBottom: "8px" }}>
+                        {pinEntryMode === "verify" && "Enter your PIN"}
+                        {pinEntryMode === "create1" && "Choose a 4-digit PIN"}
+                        {pinEntryMode === "create2" && "Enter the same PIN again"}
+                        {pinEntryMode === "change1" && "Enter your current PIN"}
+                        {pinEntryMode === "change2" && "Choose a new 4-digit PIN"}
+                        {pinEntryMode === "change3" && "Confirm the new PIN"}
+                      </label>
+                      <div className="pin-display">
+                        {[0, 1, 2, 3].map((index) => (
+                          <div
+                            key={index}
+                            className={`pin-dot ${index < pinValue.length ? "filled" : ""}`}
+                          />
+                        ))}
+                      </div>
+                      {pinError && (
+                        <p style={{ color: "#ef4444", fontSize: "0.8rem", marginTop: "6px", textAlign: "center" }}>
+                          {pinError}
+                        </p>
+                      )}
                     </div>
-                    {pinError && (
-                      <p style={{ color: "#ef4444", fontSize: "0.8rem", marginTop: "6px", textAlign: "center" }}>
-                        {pinError}
-                      </p>
-                    )}
-                  </div>
 
-                  {/* Keypad */}
-                  <div className="pin-keypad">
-                    <div className="keypad-row">
-                      <button
-                        type="button"
-                        className="keypad-button"
-                        onClick={() => {
-                          if (pinValue.length < 4) {
-                            setPinValue(pinValue + "1");
+                    <div className="pin-keypad">
+                      <div className="keypad-row">
+                        <button type="button" className="keypad-button" onClick={() => appendPinDigit("1")}>
+                          1
+                        </button>
+                        <button type="button" className="keypad-button" onClick={() => appendPinDigit("2")}>
+                          2
+                        </button>
+                        <button type="button" className="keypad-button" onClick={() => appendPinDigit("3")}>
+                          3
+                        </button>
+                      </div>
+                      <div className="keypad-row">
+                        <button type="button" className="keypad-button" onClick={() => appendPinDigit("4")}>
+                          4
+                        </button>
+                        <button type="button" className="keypad-button" onClick={() => appendPinDigit("5")}>
+                          5
+                        </button>
+                        <button type="button" className="keypad-button" onClick={() => appendPinDigit("6")}>
+                          6
+                        </button>
+                      </div>
+                      <div className="keypad-row">
+                        <button type="button" className="keypad-button" onClick={() => appendPinDigit("7")}>
+                          7
+                        </button>
+                        <button type="button" className="keypad-button" onClick={() => appendPinDigit("8")}>
+                          8
+                        </button>
+                        <button type="button" className="keypad-button" onClick={() => appendPinDigit("9")}>
+                          9
+                        </button>
+                      </div>
+                      <div className="keypad-row">
+                        <button type="button" className="keypad-button keypad-button-empty" disabled>
+                          
+                        </button>
+                        <button type="button" className="keypad-button" onClick={() => appendPinDigit("0")}>
+                          0
+                        </button>
+                        <button
+                          type="button"
+                          className="keypad-button keypad-button-delete"
+                          onClick={() => {
+                            if (!pinKeypadEnabled) return;
+                            setPinValue((v) => v.slice(0, -1));
                             setPinError("");
-                          }
-                        }}
-                      >
-                        1
-                      </button>
-                      <button
-                        type="button"
-                        className="keypad-button"
-                        onClick={() => {
-                          if (pinValue.length < 4) {
-                            setPinValue(pinValue + "2");
-                            setPinError("");
-                          }
-                        }}
-                      >
-                        2
-                      </button>
-                      <button
-                        type="button"
-                        className="keypad-button"
-                        onClick={() => {
-                          if (pinValue.length < 4) {
-                            setPinValue(pinValue + "3");
-                            setPinError("");
-                          }
-                        }}
-                      >
-                        3
-                      </button>
+                          }}
+                          disabled={pinValue.length === 0 || !pinKeypadEnabled}
+                        >
+                          ⌫
+                        </button>
+                      </div>
                     </div>
-                    <div className="keypad-row">
-                      <button
-                        type="button"
-                        className="keypad-button"
-                        onClick={() => {
-                          if (pinValue.length < 4) {
-                            setPinValue(pinValue + "4");
-                            setPinError("");
-                          }
-                        }}
-                      >
-                        4
-                      </button>
-                      <button
-                        type="button"
-                        className="keypad-button"
-                        onClick={() => {
-                          if (pinValue.length < 4) {
-                            setPinValue(pinValue + "5");
-                            setPinError("");
-                          }
-                        }}
-                      >
-                        5
-                      </button>
-                      <button
-                        type="button"
-                        className="keypad-button"
-                        onClick={() => {
-                          if (pinValue.length < 4) {
-                            setPinValue(pinValue + "6");
-                            setPinError("");
-                          }
-                        }}
-                      >
-                        6
-                      </button>
-                    </div>
-                    <div className="keypad-row">
-                      <button
-                        type="button"
-                        className="keypad-button"
-                        onClick={() => {
-                          if (pinValue.length < 4) {
-                            setPinValue(pinValue + "7");
-                            setPinError("");
-                          }
-                        }}
-                      >
-                        7
-                      </button>
-                      <button
-                        type="button"
-                        className="keypad-button"
-                        onClick={() => {
-                          if (pinValue.length < 4) {
-                            setPinValue(pinValue + "8");
-                            setPinError("");
-                          }
-                        }}
-                      >
-                        8
-                      </button>
-                      <button
-                        type="button"
-                        className="keypad-button"
-                        onClick={() => {
-                          if (pinValue.length < 4) {
-                            setPinValue(pinValue + "9");
-                            setPinError("");
-                          }
-                        }}
-                      >
-                        9
-                      </button>
-                    </div>
-                    <div className="keypad-row">
-                      <button
-                        type="button"
-                        className="keypad-button keypad-button-empty"
-                        disabled
-                      >
-                        
-                      </button>
-                      <button
-                        type="button"
-                        className="keypad-button"
-                        onClick={() => {
-                          if (pinValue.length < 4) {
-                            setPinValue(pinValue + "0");
-                            setPinError("");
-                          }
-                        }}
-                      >
-                        0
-                      </button>
-                      <button
-                        type="button"
-                        className="keypad-button keypad-button-delete"
-                        onClick={() => {
-                          setPinValue(pinValue.slice(0, -1));
-                          setPinError("");
-                        }}
-                        disabled={pinValue.length === 0}
-                      >
-                        ⌫
-                      </button>
-                    </div>
-                  </div>
 
-                  <button
-                    className="bank-auth-button"
-                    type="submit"
-                    disabled={pinValue.length < 4}
-                    style={{ marginTop: "12px", padding: "12px" }}
-                  >
-                    Verify PIN
-                  </button>
-                </form>
+                    <button
+                      className="bank-auth-button"
+                      type="submit"
+                      disabled={pinValue.length < 4 || pinSubmitting}
+                      style={{ marginTop: "12px", padding: "12px" }}
+                    >
+                      {pinPrimaryLabel}
+                    </button>
+                  </form>
+                )}
               </div>
             </div>
           </div>

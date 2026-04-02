@@ -33,6 +33,119 @@ function viewFromPath() {
   return "merchant";
 }
 
+function normalizeMerchantIntentItem(item) {
+  const now = new Date();
+  const actualStatus = item.status || "PENDING";
+  return {
+    ...item,
+    amount: Number(item.amount) || 0,
+    status: actualStatus,
+    settlementTime:
+      item.settlementTime ||
+      item.completedAt ||
+      (actualStatus === "SETTLED" ? now.toISOString() : null),
+    settlementProvider:
+      item.settlementProvider || (actualStatus === "SETTLED" ? "PayShap" : null),
+    settlementRef:
+      item.settlementRef ||
+      (actualStatus === "SETTLED" ? `SHESHA-${item.id}` : null),
+    statusHistory:
+      item.statusHistory || [
+        ...(item.createdAt
+          ? [{ status: "PENDING", timestamp: item.createdAt }]
+          : []),
+        ...(item.authorisedAt
+          ? [{ status: "AUTHORISED", timestamp: item.authorisedAt }]
+          : []),
+        ...(actualStatus === "SETTLED" && (item.settlementTime || item.completedAt)
+          ? [
+              {
+                status: "SETTLED",
+                timestamp: item.settlementTime || item.completedAt,
+              },
+            ]
+          : []),
+      ],
+    orderId: item.orderId || item.id,
+  };
+}
+
+/** Merge Supabase `merchant_orders` (+ joined customers) into payment rows and append orphan saved orders. */
+function enrichPaymentsWithPersistedOrders(normalized, savedRows) {
+  const safeSaved = Array.isArray(savedRows) ? savedRows : [];
+  if (safeSaved.length === 0) {
+    return [...normalized].sort(
+      (a, b) =>
+        new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
+    );
+  }
+
+  const savedByIntentId = new Map();
+  const savedByOrderId = new Map();
+  for (const row of safeSaved) {
+    if (row.payment_intent_id) savedByIntentId.set(row.payment_intent_id, row);
+    if (row.order_id) savedByOrderId.set(String(row.order_id), row);
+  }
+
+  const withSaved = normalized.map((item) => {
+    const saved =
+      savedByIntentId.get(item.id) ||
+      savedByOrderId.get(String(item.orderId || "")) ||
+      savedByOrderId.get(String(item.id || ""));
+    return {
+      ...item,
+      ...(saved && {
+        savedCustomerPhone: saved.customers?.phone_normalized,
+        savedCustomerName: saved.customers?.display_name,
+        savedMerchantOrderId: saved.id,
+        persistedOrderStatus: saved.status,
+      }),
+    };
+  });
+
+  const coveredIds = new Set(
+    withSaved.flatMap((p) => [p.id, p.orderId].filter(Boolean).map(String))
+  );
+  const out = [...withSaved];
+
+  for (const row of safeSaved) {
+    const oid = row.order_id != null ? String(row.order_id) : "";
+    const pid = row.payment_intent_id != null ? String(row.payment_intent_id) : "";
+    if ((pid && coveredIds.has(pid)) || (oid && coveredIds.has(oid))) {
+      continue;
+    }
+    const syntheticId = pid || oid || row.id;
+    out.push({
+      id: syntheticId,
+      orderId: oid || pid,
+      amount: Number(row.amount) || 0,
+      currency: row.currency || "ZAR",
+      description: row.description || "Saved order",
+      status:
+        row.status === "PAID"
+          ? "SETTLED"
+          : row.status === "CANCELLED"
+            ? "CANCELLED"
+            : "PENDING",
+      createdAt: row.created_at,
+      savedCustomerPhone: row.customers?.phone_normalized,
+      savedCustomerName: row.customers?.display_name,
+      savedMerchantOrderId: row.id,
+      persistedOrderStatus: row.status,
+      fromPersistedOnly: true,
+    });
+    coveredIds.add(String(syntheticId));
+    if (oid) coveredIds.add(oid);
+    if (pid) coveredIds.add(pid);
+  }
+
+  out.sort(
+    (a, b) =>
+      new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
+  );
+  return out;
+}
+
 function getPaymentTokenFromPath() {
   const path = window.location.pathname;
   const match = path.match(/^\/(?:pay|customer)\/([^/?#]+)/);
@@ -80,6 +193,11 @@ function App() {
     orderId: `ORD-${Date.now()}`,
   });
   const [newItem, setNewItem] = useState({ name: "", price: "", quantity: 1 });
+
+  const clearReceiptItems = () => {
+    setItems([]);
+    setNewItem({ name: "", price: "", quantity: 1 });
+  };
   const [customerLinkPayment, setCustomerLinkPayment] = useState(null);
   const [linkExpired, setLinkExpired] = useState(false);
   const [linkLoading, setLinkLoading] = useState(false);
@@ -265,43 +383,29 @@ function App() {
     setPaymentsLoading(true);
     setPaymentsError("");
     try {
-      const res = await fetch(`${API_BASE}/api/payment-intents`, {
-        headers: await getAuthHeaders(),
-      });
-      if (!res.ok) throw new Error(`Request failed with ${res.status}`);
-      const data = await res.json();
-      const normalized = Array.isArray(data)
-        ? data
-            .map((item) => {
-              // Use actual status from backend, don't force SETTLED
-              const now = new Date();
-              // Determine status - use actual status if available, otherwise default to PENDING
-              const actualStatus = item.status || "PENDING";
+      const [intentsRes, persistedRes] = await Promise.all([
+        fetch(`${API_BASE}/api/payment-intents`, {
+          headers: await getAuthHeaders(),
+        }),
+        fetch(`${API_BASE}/api/merchant-orders`, {
+          headers: await getAuthHeaders(),
+        }),
+      ]);
+      if (!intentsRes.ok) throw new Error(`Request failed with ${intentsRes.status}`);
+      const data = await intentsRes.json();
+      let savedRows = [];
+      if (persistedRes.ok) {
+        try {
+          savedRows = await persistedRes.json();
+        } catch {
+          savedRows = [];
+        }
+      }
+      if (!Array.isArray(savedRows)) savedRows = [];
 
-              return {
-                ...item,
-                amount: Number(item.amount) || 0,
-                status: actualStatus, // Use real status from backend
-                settlementTime: item.settlementTime || item.completedAt || (actualStatus === "SETTLED" ? now.toISOString() : null),
-                settlementProvider: item.settlementProvider || (actualStatus === "SETTLED" ? "PayShap" : null),
-                settlementRef: item.settlementRef || (actualStatus === "SETTLED" ? `SHESHA-${item.id}` : null),
-                // Use actual status history if available, otherwise build from timestamps
-                statusHistory: item.statusHistory || [
-                  ...(item.createdAt ? [{
-                    status: "PENDING",
-                    timestamp: item.createdAt
-                  }] : []),
-                  ...(item.authorisedAt ? [{
-                    status: "AUTHORISED",
-                    timestamp: item.authorisedAt
-                  }] : []),
-                  ...(actualStatus === "SETTLED" && (item.settlementTime || item.completedAt) ? [{
-                    status: "SETTLED",
-                    timestamp: item.settlementTime || item.completedAt
-                  }] : [])
-                ]
-              };
-            })
+      const normalizedBase = Array.isArray(data)
+        ? data
+            .map((item) => normalizeMerchantIntentItem(item))
             .sort(
               (a, b) =>
                 new Date(b.createdAt || 0).getTime() -
@@ -309,31 +413,29 @@ function App() {
             )
         : [];
 
+      const enriched = enrichPaymentsWithPersistedOrders(normalizedBase, savedRows);
+
       // Merge with locally created payments (from checkout mode) that might not be in backend yet
       setMerchantPayments((prev) => {
-        // Create a map of backend payments by their orderId and ID (for matching)
         const backendByOrderId = new Map();
         const backendById = new Map();
-        normalized.forEach(payment => {
+        enriched.forEach((payment) => {
           if (payment.orderId) {
             backendByOrderId.set(payment.orderId, payment);
           }
           backendById.set(payment.id, payment);
         });
 
-        // Get locally created payments that aren't in backend yet
-        const localPayments = prev.filter(p => {
-          // Check if backend has this payment by ID or orderId
-          const backendPayment = backendById.get(p.id) || backendByOrderId.get(p.id) || backendByOrderId.get(p.orderId);
-          // If backend has it, don't include local version (backend has real status)
+        const localPayments = prev.filter((p) => {
+          const backendPayment =
+            backendById.get(p.id) ||
+            backendByOrderId.get(p.id) ||
+            backendByOrderId.get(p.orderId);
           return !backendPayment;
         });
 
-        // Start with backend payments (they have real status including SETTLED/COMPLETED)
-        const merged = [...normalized];
-
-        // Add local payments that don't exist in backend yet
-        localPayments.forEach(localPayment => {
+        const merged = [...enriched];
+        localPayments.forEach((localPayment) => {
           merged.push(localPayment);
         });
 
@@ -855,50 +957,37 @@ function App() {
     setPaymentsLoading(true);
     setPaymentsError("");
     try {
-      const res = await fetch(`${API_BASE}/api/payment-intents`, {
-        headers: await getAuthHeaders(),
-      });
-      if (!res.ok) throw new Error(`Request failed with ${res.status}`);
-      const data = await res.json();
-      const normalized = Array.isArray(data)
-        ? data
-            .map((item) => {
-              // Use actual status from backend, don't force SETTLED
-              const now = new Date();
-              // Determine status - use actual status if available, otherwise default to PENDING
-              const actualStatus = item.status || "PENDING";
+      const [intentsRes, persistedRes] = await Promise.all([
+        fetch(`${API_BASE}/api/payment-intents`, {
+          headers: await getAuthHeaders(),
+        }),
+        fetch(`${API_BASE}/api/merchant-orders`, {
+          headers: await getAuthHeaders(),
+        }),
+      ]);
+      if (!intentsRes.ok) throw new Error(`Request failed with ${intentsRes.status}`);
+      const data = await intentsRes.json();
+      let savedRows = [];
+      if (persistedRes.ok) {
+        try {
+          savedRows = await persistedRes.json();
+        } catch {
+          savedRows = [];
+        }
+      }
+      if (!Array.isArray(savedRows)) savedRows = [];
 
-              return {
-                ...item,
-                amount: Number(item.amount) || 0,
-                status: actualStatus, // Use real status from backend
-                settlementTime: item.settlementTime || item.completedAt || (actualStatus === "SETTLED" ? now.toISOString() : null),
-                settlementProvider: item.settlementProvider || (actualStatus === "SETTLED" ? "PayShap" : null),
-                settlementRef: item.settlementRef || (actualStatus === "SETTLED" ? `SHESHA-${item.id}` : null),
-                // Use actual status history if available, otherwise build from timestamps
-                statusHistory: item.statusHistory || [
-                  ...(item.createdAt ? [{
-                    status: "PENDING",
-                    timestamp: item.createdAt
-                  }] : []),
-                  ...(item.authorisedAt ? [{
-                    status: "AUTHORISED",
-                    timestamp: item.authorisedAt
-                  }] : []),
-                  ...(actualStatus === "SETTLED" && (item.settlementTime || item.completedAt) ? [{
-                    status: "SETTLED",
-                    timestamp: item.settlementTime || item.completedAt
-                  }] : [])
-                ],
-                orderId: item.orderId || item.id, // Ensure orderId is present for matching
-              };
-            })
+      const normalizedBase = Array.isArray(data)
+        ? data
+            .map((item) => normalizeMerchantIntentItem(item))
             .sort(
               (a, b) =>
                 new Date(b.createdAt || 0).getTime() -
                 new Date(a.createdAt || 0).getTime()
             )
         : [];
+
+      const normalized = enrichPaymentsWithPersistedOrders(normalizedBase, savedRows);
 
       // Replace all payments with backend data (don't merge, just replace)
       setMerchantPayments(normalized);
@@ -1224,6 +1313,7 @@ function App() {
           onPresetAdd={handlePresetAdd}
           onItemChange={handleItemChange}
           onRemoveItem={handleRemoveItem}
+          onClearReceiptItems={clearReceiptItems}
           receiptTotal={receiptTotal}
           receiptSubtotal={receiptSubtotal}
           receiptTax={receiptTax}

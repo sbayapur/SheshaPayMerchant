@@ -35,8 +35,10 @@ npm install --prefix backend
 
 Payment lifecycle events are stored in Supabase instead of in-memory logs:
 
-1. Run the migration in Supabase SQL Editor: copy contents of `supabase/migrations/001_create_transactions_table.sql`
+1. Run the migration in Supabase SQL Editor: copy contents of `supabase/migrations/001_create_transactions_table.sql` (if you use the transactions / payment intent store features from the backend)
 2. Add `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` to backend env (from Supabase Project Settings → API)
+
+If you use **saved order history / customers**, create the `customers` and `merchant_orders` tables in the SQL Editor (same project as above).
 
 ### 4. Run locally
 
