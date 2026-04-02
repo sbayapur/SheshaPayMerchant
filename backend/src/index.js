@@ -10,6 +10,8 @@ import { supabaseAdmin } from "./supabaseClient.js";
 import { getMerchantUserIdFromRequest } from "./merchantAuth.js";
 
 const app = express();
+// App Runner / ALB send X-Forwarded-For; express-rate-limit requires this or it throws (ERR_ERL_UNEXPECTED_X_FORWARDED_FOR)
+app.set("trust proxy", 1);
 const port = process.env.PORT || 4000;
 
 // CORS: allow FRONTEND_BASE_URL (comma-separated for multiple). When unset, allow all.
