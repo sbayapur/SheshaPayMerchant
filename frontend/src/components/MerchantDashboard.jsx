@@ -7,6 +7,17 @@ import ReceiptItemsCard from "./ReceiptItemsCard.jsx";
 import PaymentsTable from "./PaymentsTable.jsx";
 import EmployeesView from "./EmployeesView.jsx";
 import AccountingView from "./AccountingView.jsx";
+import { formatZAR, devErr, devWarn } from "../lib/format.js";
+
+// Gate artificial delays behind VITE_DEMO_MODE so production feels instant
+const demoDelay = (ms) => import.meta.env.VITE_DEMO_MODE === 'true' ? ms : 0;
+
+function isValidSAPhone(value) {
+  const digits = value.replace(/\D/g, '');
+  if (digits.startsWith('27')) return digits.length === 11;
+  if (digits.startsWith('0')) return digits.length === 10;
+  return false;
+}
 
 function MerchantDashboard({
   currencySymbol,
@@ -264,7 +275,7 @@ function MerchantDashboard({
         } finally {
           setWhatsappConnecting(false);
         }
-      }, 1500);
+      }, demoDelay(1500));
       return;
     }
 
@@ -429,7 +440,7 @@ function MerchantDashboard({
       // Close modal
       setShowBankAuthModal(false);
       setIsAuthenticating(false);
-    }, 4000);
+    }, demoDelay(4000));
   };
 
   const handleCloseBankAuthModal = () => {
@@ -718,7 +729,7 @@ function MerchantDashboard({
     const phoneNumber = invoicePhoneNumber.trim().replace(/\D/g, "");
     const whatsappNumber = phoneNumber.startsWith("27") ? phoneNumber : `27${phoneNumber}`;
     const whatsappMessage = encodeURIComponent(
-      `Hi! Please pay R${selectedPaymentForInvoice.amount?.toFixed(2) || "0.00"} for ${selectedPaymentForInvoice.description || "your order"}.\n\nPay here: ${checkoutLink}`
+      `Hi! Please pay ${formatZAR(selectedPaymentForInvoice.amount)} for ${selectedPaymentForInvoice.description || "your order"}.\n\nPay here: ${checkoutLink}`
     );
     window.open(`https://wa.me/${whatsappNumber}?text=${whatsappMessage}`, "_blank", "noopener,noreferrer");
     handleCloseInvoiceModal();
@@ -1404,7 +1415,7 @@ function MerchantDashboard({
               <div className="bank-auth-modal-content">
                 <div style={{ marginBottom: "20px" }}>
                   <p className="metric-label" style={{ marginBottom: "8px" }}>
-                    Amount: <strong>{currencySymbol}{pendingPayment.amount?.toFixed(2) || "0.00"}</strong>
+                    Amount: <strong>{formatZAR(pendingPayment.amount)}</strong>
                   </p>
                   {pendingPayment.note && (
                     <p className="metric-label" style={{ marginBottom: "12px" }}>
@@ -1418,6 +1429,7 @@ function MerchantDashboard({
                     id="create-invoice-description"
                     className="bank-auth-select"
                     rows={3}
+                    maxLength={255}
                     placeholder="e.g. invoice reference, job name, or note for the customer"
                     value={createInvoiceDescriptionInput}
                     onChange={(e) => setCreateInvoiceDescriptionInput(e.target.value)}
@@ -1430,6 +1442,9 @@ function MerchantDashboard({
                       lineHeight: 1.4,
                     }}
                   />
+                  <small style={{ color: "var(--muted)", fontSize: "0.75rem", display: "block", textAlign: "right", marginTop: "2px" }}>
+                    {createInvoiceDescriptionInput.length}/255
+                  </small>
                 </div>
 
                 <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
@@ -1494,7 +1509,7 @@ function MerchantDashboard({
                     Payment: <strong>{selectedPaymentForInvoice.id}</strong>
                   </p>
                   <p className="metric-label" style={{ marginBottom: "8px" }}>
-                    Amount: <strong>{currencySymbol}{selectedPaymentForInvoice.amount?.toFixed(2) || "0.00"}</strong>
+                    Amount: <strong>{formatZAR(selectedPaymentForInvoice.amount)}</strong>
                   </p>
                   {selectedPaymentForInvoice.description && (
                     <p className="metric-label">
@@ -1523,23 +1538,25 @@ function MerchantDashboard({
                       id="invoice-phone"
                       type="tel"
                       className="bank-auth-select"
-                      placeholder="Enter phone number (e.g., 0821234567)"
+                      placeholder="e.g. 0821234567 or +27821234567"
                       value={invoicePhoneNumber}
                       onChange={(e) => setInvoicePhoneNumber(e.target.value)}
-                      style={{ marginBottom: "12px" }}
+                      style={{ marginBottom: "4px" }}
                     />
+                    {invoicePhoneNumber.trim() && !isValidSAPhone(invoicePhoneNumber) && (
+                      <p style={{ color: "var(--error)", fontSize: "0.75rem", marginBottom: "8px", marginTop: "2px" }}>
+                        Enter a valid SA mobile number (e.g. 0821234567)
+                      </p>
+                    )}
                     <button
                       className="bank-auth-button"
                       type="button"
                       onClick={handleSendViaWhatsApp}
-                      disabled={!invoicePhoneNumber.trim()}
-                      style={{ width: "100%" }}
+                      disabled={!invoicePhoneNumber.trim() || !isValidSAPhone(invoicePhoneNumber)}
+                      style={{ width: "100%", marginTop: "8px" }}
                     >
                       Send via WhatsApp
                     </button>
-                    <p className="payment-subtext" style={{ marginTop: "8px", fontSize: "0.75rem", textAlign: "center" }}>
-                      Enter phone number without country code (e.g., 0821234567)
-                    </p>
                   </div>
                 </div>
               </div>

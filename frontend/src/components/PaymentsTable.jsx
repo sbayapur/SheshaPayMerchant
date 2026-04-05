@@ -1,3 +1,5 @@
+import { formatZAR, formatDateZA } from "../lib/format.js";
+
 function PaymentsTable({
   payments,
   loading,
@@ -99,7 +101,13 @@ function PaymentsTable({
               <span className="payment-subtext">No payment intents yet. Create one from checkout.</span>
             </div>
           )}
-          {payments.map((p, idx) => {
+          {[...payments]
+            .sort((a, b) => {
+              const aOverdue = !!(getInvoice(a)?.status === "OVERDUE");
+              const bOverdue = !!(getInvoice(b)?.status === "OVERDUE");
+              return aOverdue === bOverdue ? 0 : aOverdue ? -1 : 1;
+            })
+            .map((p, idx) => {
             const invoice = getInvoice(p);
             const isOverdue = invoice && invoice.status === "OVERDUE";
             const hasInvoice = !!invoice;
@@ -110,9 +118,7 @@ function PaymentsTable({
               <div key={p.id}>
                 <div className={`payments-row ${isOverdue ? "payments-row-overdue" : idx % 2 === 1 ? "payments-row-alt" : ""}`}>
                   <span className="payments-cell mono">{maskId(p.id)}</span>
-                  <span className="payments-cell">
-                    {currencySymbol} {p.amount.toFixed(2)}
-                  </span>
+                  <span className="payments-cell">{formatZAR(p.amount)}</span>
                   <span className="payments-cell">
                     <span className={`pill ${getEffectiveStatusClass(p)}`}>
                       {getEffectiveStatusLabel(p)}
@@ -137,7 +143,7 @@ function PaymentsTable({
                     {getCustomerLabel(p)}
                   </span>
                   <span className="payments-cell">
-                    {p.createdAt ? new Date(p.createdAt).toLocaleString() : "N/A"}
+                    {p.createdAt ? formatDateZA(p.createdAt, true) : "N/A"}
                   </span>
                   <span className="payments-cell">
                     <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>

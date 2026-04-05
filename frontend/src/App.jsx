@@ -10,6 +10,7 @@ import { supabase } from "./lib/supabase.js";
 import { getApiBase } from "./lib/api.js";
 import { getAuthHeaders } from "./lib/apiAuth.js";
 import { sessionRequiresNewPassword } from "./lib/authRecovery.js";
+import { devErr, devWarn } from "./lib/format.js";
 
 const API_BASE = getApiBase();
 const ORDER_TOTAL = 75;

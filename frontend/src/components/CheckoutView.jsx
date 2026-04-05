@@ -1,5 +1,8 @@
 import { useState, useEffect, useRef } from "react";
 import { getApiBase } from "../lib/api.js";
+import { devErr } from "../lib/format.js";
+
+const demoDelay = (ms) => import.meta.env.VITE_DEMO_MODE === 'true' ? ms : 0;
 
 function CheckoutView({
   items,
@@ -119,7 +122,7 @@ function CheckoutView({
       }
 
       setIsAuthenticating(false);
-    }, 1000); // Faster than normal 2 second delay
+    }, demoDelay(1000));
   };
 
   const handleBankSelected = () => {
@@ -169,7 +172,7 @@ function CheckoutView({
       setIsAuthenticating(false);
       setShowBankLogin(false);
       setBankCredentials({ username: "", password: "" });
-    }, 2000);
+    }, demoDelay(2000));
   };
 
   const handleCloseBankAuthModal = () => {

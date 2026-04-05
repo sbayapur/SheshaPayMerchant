@@ -1,3 +1,10 @@
+// ── Dev-only logging ─────────────────────────────────────────────────────────
+// Use devErr / devWarn instead of console.error / console.warn so nothing
+// leaks to the browser console in production builds.
+export const devErr = (...args) => { if (import.meta.env.DEV) console.error(...args); };
+export const devWarn = (...args) => { if (import.meta.env.DEV) console.warn(...args); };
+
+// ── Currency & date formatting ────────────────────────────────────────────────
 const zarFormatter = new Intl.NumberFormat('en-ZA', {
   style: 'currency',
   currency: 'ZAR',
