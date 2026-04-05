@@ -10,31 +10,25 @@ See also: [`CLAUDE.md`](../CLAUDE.md) for project conventions.
 ---
 
 ### CRIT-1. Persistent Session After Password Reset — Security Review
-**Reported:** 2026-04-05
+**Reported:** 2026-04-05  
+**Fixed:** 2026-04-04 (`App.jsx` — `USER_UPDATED` now calls `supabase.auth.signOut()`)  
 **Category:** Security / Auth
 **Priority:** High
 
-**Problem:** After resetting password, refreshing the page signs the user back in automatically. The user should be fully signed out and required to log in with their new password. This is a security risk — anyone with physical or remote access to the browser at the time of a password reset would remain authenticated.
+**Problem:** After resetting password, refreshing the page signs the user back in automatically. The user should be fully signed out and required to log in with their new password.
 
-**Root cause (suspected):**
-Supabase persists the session JWT in `localStorage` by default. When a password reset is triggered, Supabase issues a recovery token and fires `SIGNED_IN` via `onAuthStateChange` (`App.jsx:286`). The `authRecovery.js` logic detects the `recovery` AMR claim and blocks dashboard access (`needsNewPassword` flow), but if the user refreshes *after* setting a new password, the new session token is stored in localStorage and the `onAuthStateChange` re-fires `SIGNED_IN` — letting them straight in without re-entering credentials.
+**Root cause:**
+Supabase persists the session JWT in `localStorage`. After a password update the `USER_UPDATED` event fired with a fresh non-recovery session, which the old `applySession` logic treated as a valid login (`setIsLoggedIn(true)`).
 
-**Files to investigate:**
-- `frontend/src/App.jsx:232-289` — `onAuthStateChange` / `applySession` logic
-- `frontend/src/lib/authRecovery.js` — recovery token detection
-- `frontend/src/lib/supabase.js` — Supabase client config (no `persistSession` or `autoRefreshToken` overrides currently set)
-- `frontend/src/components/LoginScreen.jsx` — sign-in / sign-up / forgot password flows
+**Fix applied (`App.jsx:255-263`):**
+`USER_UPDATED` now unconditionally calls `supabase.auth.signOut()` and sets `isLoggedIn(false)`. The user is returned to the login screen and must sign in with their new credentials.
 
-**Fix checklist:**
-- [ ] After a successful password update (`USER_UPDATED` event), call `supabase.auth.signOut()` and force the user back to the login screen — require them to sign in with the new password
-- [ ] Verify `passwordRecoveryPending` ref is correctly reset in all exit paths
-- [ ] Review whether `persistSession: false` is appropriate for this app (merchant dashboard — shared devices possible)
-- [ ] Ensure the "Forgot password" email link cannot be replayed (Supabase one-time token — verify it is consumed correctly)
-- [ ] Test: sign in → request password reset → open link → set new password → refresh → must see login screen, not dashboard
-- [ ] Test: sign in → request password reset → do NOT set new password → refresh → must see login screen
-- [ ] Test: sign in normally → sign out → refresh → must see login screen (no auto re-auth)
-- [ ] Test: sign in → close tab → reopen → decide and document expected behaviour (session expiry policy)
-- [ ] Review all Supabase auth events handled in `applySession` for gaps: `INITIAL_SESSION`, `TOKEN_REFRESHED`, `USER_UPDATED`, `PASSWORD_RECOVERY`, `SIGNED_OUT`
+**Remaining test checklist (manual):**
+- [ ] Sign in → request password reset → open link → set new password → must land on login screen (not dashboard)
+- [ ] Same as above → refresh after new password set → must still see login screen
+- [ ] Sign in normally → sign out → refresh → must see login screen
+- [ ] Sign in → close tab → reopen → session should persist (normal flow unaffected)
+- [ ] Review whether `persistSession: false` is appropriate for merchant dashboard on shared devices
 
 ---
 

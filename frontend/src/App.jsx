@@ -252,14 +252,24 @@ function App() {
         return;
       }
 
-      if (
-        (event === "USER_UPDATED" || event === "TOKEN_REFRESHED") &&
-        session &&
-        !sessionRequiresNewPassword(session)
-      ) {
+      if (event === "USER_UPDATED") {
+        // Password was successfully updated — sign out and require fresh login
+        // with new credentials so the session is not silently reused.
         passwordRecoveryPending.current = false;
         setNeedsNewPassword(false);
-        setIsLoggedIn(!!session);
+        setIsLoggedIn(false);
+        supabase.auth.signOut();
+        return;
+      }
+
+      if (
+        event === "TOKEN_REFRESHED" &&
+        session &&
+        !sessionRequiresNewPassword(session) &&
+        !passwordRecoveryPending.current
+      ) {
+        setNeedsNewPassword(false);
+        setIsLoggedIn(true);
         return;
       }
 
