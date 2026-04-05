@@ -60,7 +60,7 @@ function MerchantDashboard({
           orderId: payment.id,
           amount: payment.amount,
           currency: payment.currency || "ZAR",
-          note: payment.note || "",
+          note: payment.description || payment.note || "",
           items: payment.items || [],
           merchantName: "Sunrise Salon",
           baseUrl,
@@ -188,6 +188,8 @@ function MerchantDashboard({
   // Invoice & Reminder state
   const [invoicesMap, setInvoicesMap] = useState({}); // orderId/paymentIntentId -> invoice
   const [customerPhoneInput, setCustomerPhoneInput] = useState("");
+  /** Optional free-text note on the Create Invoice modal (combined with line-item summary for invoices / payments). */
+  const [createInvoiceDescriptionInput, setCreateInvoiceDescriptionInput] = useState("");
 
   // WhatsApp Business connection state
   const [whatsappStatus, setWhatsappStatus] = useState({ connected: false });
@@ -757,15 +759,28 @@ function MerchantDashboard({
 
     // Store payment and show options modal
     setPendingPayment(payment);
+    setCreateInvoiceDescriptionInput("");
     setShowCreateInvoiceOptions(true);
+  };
+
+  const buildCreateInvoiceDescription = (payment) => {
+    const lineSummary = (payment?.note || payment?.description || "").trim();
+    const extra = createInvoiceDescriptionInput.trim();
+    if (extra && lineSummary) return `${extra} — ${lineSummary}`;
+    return extra || lineSummary || "";
   };
 
   const handleShowQr = async () => {
     if (!pendingPayment) return;
     
     // Store payment reference before clearing state
-    const paymentToAdd = { ...pendingPayment };
+    const paymentToAdd = {
+      ...pendingPayment,
+      description: buildCreateInvoiceDescription(pendingPayment),
+    };
     const phone = customerPhoneInput.trim();
+    const paymentDescription =
+      paymentToAdd.description || paymentToAdd.note || "";
     
     // Create payment intent on backend so status can be tracked
     let paymentIntentId = null;
@@ -777,7 +792,7 @@ function MerchantDashboard({
         body: JSON.stringify({
           amount: paymentToAdd.amount,
           currency: paymentToAdd.currency || "ZAR",
-          description: paymentToAdd.note || paymentToAdd.description || "",
+          description: paymentDescription,
           orderId: paymentToAdd.id, // Use the same orderId
         }),
       });
@@ -808,7 +823,7 @@ function MerchantDashboard({
               taxAmount: paymentToAdd.amount - paymentToAdd.amount / 1.15,
               currency: paymentToAdd.currency || "ZAR",
               items: paymentToAdd.items || [],
-              description: paymentToAdd.note || paymentToAdd.description || "",
+              description: paymentDescription,
               checkoutLink,
             }),
           });
@@ -823,6 +838,7 @@ function MerchantDashboard({
     setShowCreateInvoiceOptions(false);
     setPendingPayment(null);
     setCustomerPhoneInput("");
+    setCreateInvoiceDescriptionInput("");
     
     // Add payment to list
     if (onAddPayment) {
@@ -844,8 +860,13 @@ function MerchantDashboard({
     if (!customerPhoneInput.trim()) return;
     
     // Store payment reference before clearing state
-    const paymentToAdd = { ...pendingPayment };
+    const paymentToAdd = {
+      ...pendingPayment,
+      description: buildCreateInvoiceDescription(pendingPayment),
+    };
     const phone = customerPhoneInput.trim();
+    const paymentDescription =
+      paymentToAdd.description || paymentToAdd.note || "";
     
     // Create payment intent on backend so status can be tracked
     let paymentIntentId = null;
@@ -857,7 +878,7 @@ function MerchantDashboard({
         body: JSON.stringify({
           amount: paymentToAdd.amount,
           currency: paymentToAdd.currency || "ZAR",
-          description: paymentToAdd.note || paymentToAdd.description || "",
+          description: paymentDescription,
           orderId: paymentToAdd.id, // Use the same orderId
         }),
       });
@@ -887,7 +908,7 @@ function MerchantDashboard({
             taxAmount: paymentToAdd.amount - paymentToAdd.amount / 1.15,
             currency: paymentToAdd.currency || "ZAR",
             items: paymentToAdd.items || [],
-            description: paymentToAdd.note || paymentToAdd.description || "",
+            description: paymentDescription,
             checkoutLink,
           }),
         });
@@ -901,6 +922,7 @@ function MerchantDashboard({
     setShowCreateInvoiceOptions(false);
     setPendingPayment(null);
     setCustomerPhoneInput("");
+    setCreateInvoiceDescriptionInput("");
     
     // Add payment to list (only once)
     if (onAddPayment) {
@@ -920,6 +942,8 @@ function MerchantDashboard({
   const handleCloseCreateInvoiceOptions = () => {
     setShowCreateInvoiceOptions(false);
     setPendingPayment(null);
+    setCreateInvoiceDescriptionInput("");
+    setCustomerPhoneInput("");
   };
 
   // Filter payments by time period
@@ -1241,14 +1265,6 @@ function MerchantDashboard({
               </button>
             </div>
 
-            {!logStatsLoading && useLogMetrics && (
-              <p
-                className="metric-hint"
-                style={{ fontSize: "0.8rem", color: "var(--text-secondary)", margin: "0 0 12px" }}
-              >
-                Totals from your transaction log (same period as above).
-              </p>
-            )}
             {!logStatsLoading && logStatsUseFallback && (
               <p
                 className="metric-hint"
@@ -1390,10 +1406,29 @@ function MerchantDashboard({
                     Amount: <strong>{currencySymbol}{pendingPayment.amount?.toFixed(2) || "0.00"}</strong>
                   </p>
                   {pendingPayment.note && (
-                    <p className="metric-label">
-                      Description: {pendingPayment.note}
+                    <p className="metric-label" style={{ marginBottom: "12px" }}>
+                      Line items: {pendingPayment.note}
                     </p>
                   )}
+                  <label className="bank-auth-label" htmlFor="create-invoice-description">
+                    Description <span style={{ fontWeight: 400, color: "var(--muted)" }}>(optional)</span>
+                  </label>
+                  <textarea
+                    id="create-invoice-description"
+                    className="bank-auth-select"
+                    rows={3}
+                    placeholder="e.g. invoice reference, job name, or note for the customer"
+                    value={createInvoiceDescriptionInput}
+                    onChange={(e) => setCreateInvoiceDescriptionInput(e.target.value)}
+                    style={{
+                      marginTop: "6px",
+                      width: "100%",
+                      resize: "vertical",
+                      minHeight: "72px",
+                      fontFamily: "inherit",
+                      lineHeight: 1.4,
+                    }}
+                  />
                 </div>
 
                 <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
@@ -1410,9 +1445,13 @@ function MerchantDashboard({
                     type="button"
                     onClick={() => {
                       if (!pendingPayment) return;
-                      const paymentToAdd = { ...pendingPayment };
+                      const paymentToAdd = {
+                        ...pendingPayment,
+                        description: buildCreateInvoiceDescription(pendingPayment),
+                      };
                       setShowCreateInvoiceOptions(false);
                       setPendingPayment(null);
+                      setCreateInvoiceDescriptionInput("");
                       if (onAddPayment) {
                         onAddPayment(paymentToAdd);
                       }
