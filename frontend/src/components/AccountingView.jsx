@@ -557,7 +557,7 @@ function AccountingView({ merchantPayments, currencySymbol }) {
                   </div>
                   {(() => {
                     let runningBalance = accountingData.cashFlow.openingBalance;
-                    return accountingData.payments.map((payment) => {
+                    return accountingData.payments.map((payment, idx) => {
                       const amount = Number(payment.amount) || 0;
                       const isSettled = payment.status === "SETTLED" || payment.status === "succeeded" || payment.status === "COMPLETED";
                       // Only add settled payments to running balance (proper accounting)
@@ -566,7 +566,7 @@ function AccountingView({ merchantPayments, currencySymbol }) {
                       }
                       const date = new Date(payment.createdAt || payment.settlementTime).toLocaleDateString();
                       return (
-                        <div key={payment.id || Math.random()} className="vat-payments-row">
+                        <div key={payment.id || `payment-${idx}`} className="vat-payments-row">
                           <div className="vat-payments-cell">{date}</div>
                           <div className="vat-payments-cell mono">{payment.id || "N/A"}</div>
                           <div className="vat-payments-cell">
@@ -691,8 +691,8 @@ function AccountingView({ merchantPayments, currencySymbol }) {
                       <div className="vat-payments-cell">Status</div>
                       <div className="vat-payments-cell" style={{ textAlign: "right" }}>Amount</div>
                     </div>
-                    {reconciliationData.unmatched.map((payment) => (
-                      <div key={payment.id || Math.random()} className="vat-payments-row" style={{ gridTemplateColumns: "1fr 1fr 1fr 1fr" }}>
+                    {reconciliationData.unmatched.map((payment, idx) => (
+                      <div key={payment.id || `unmatched-${idx}`} className="vat-payments-row" style={{ gridTemplateColumns: "1fr 1fr 1fr 1fr" }}>
                         <div className="vat-payments-cell">
                           {new Date(payment.createdAt || payment.settlementTime).toLocaleDateString()}
                         </div>

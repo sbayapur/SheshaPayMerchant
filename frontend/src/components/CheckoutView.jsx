@@ -31,11 +31,13 @@ function CheckoutView({
   const [savedPhone, setSavedPhone] = useState(null);
   const phoneContentRef = useRef(null);
 
-  // Check for saved phone number on mount
+  // Check for saved phone number on mount (try-catch for private browsing)
   useEffect(() => {
-    const saved = localStorage.getItem('sheshaPay_savedPhone');
-    if (saved) {
-      setSavedPhone(saved);
+    try {
+      const saved = localStorage.getItem('sheshaPay_savedPhone');
+      if (saved) setSavedPhone(saved);
+    } catch {
+      // localStorage unavailable (private browsing) — continue without saved phone
     }
   }, []);
 

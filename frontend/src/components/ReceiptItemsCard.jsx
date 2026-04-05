@@ -1,3 +1,5 @@
+import { formatZAR } from "../lib/format.js";
+
 function ReceiptItemsCard({
   currencySymbol,
   receiptTotal,
@@ -113,21 +115,15 @@ function ReceiptItemsCard({
           <div style={{ marginBottom: "12px" }}>
             <div className="receipt-total" style={{ marginBottom: "8px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <span>Subtotal</span>
-              <span>
-                {currencySymbol} {(receiptSubtotal || 0).toFixed(2)}
-              </span>
+              <span>{formatZAR(receiptSubtotal)}</span>
             </div>
             <div className="receipt-total" style={{ marginBottom: "8px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <span>Tax (15%)</span>
-              <span>
-                {currencySymbol} {(receiptTax || 0).toFixed(2)}
-              </span>
+              <span>{formatZAR(receiptTax)}</span>
             </div>
             <div className="receipt-total" style={{ marginBottom: "16px", display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: "8px", borderTop: "1px solid var(--border)" }}>
               <strong>Total</strong>
-              <strong>
-                {currencySymbol} {receiptTotal.toFixed(2)}
-              </strong>
+              <strong>{formatZAR(receiptTotal)}</strong>
             </div>
           </div>
           <button

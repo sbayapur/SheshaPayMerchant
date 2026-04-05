@@ -217,11 +217,11 @@ function VATReportingView({ merchantPayments, currencySymbol }) {
                   <div className="vat-payments-cell" style={{ textAlign: "right" }}>Amount</div>
                   <div className="vat-payments-cell" style={{ textAlign: "right" }}>VAT</div>
                 </div>
-                {vatReport.payments.map((payment) => {
+                {vatReport.payments.map((payment, idx) => {
                   const paymentVAT = (Number(payment.amount) || 0) * (vatRate / 100);
                   const date = new Date(payment.createdAt || payment.settlementTime).toLocaleDateString();
                   return (
-                    <div key={payment.id || Math.random()} className="vat-payments-row">
+                    <div key={payment.id || `vat-payment-${idx}`} className="vat-payments-row">
                       <div className="vat-payments-cell mono">{payment.id || "N/A"}</div>
                       <div className="vat-payments-cell">{date}</div>
                       <div className="vat-payments-cell" style={{ textAlign: "right" }}>
