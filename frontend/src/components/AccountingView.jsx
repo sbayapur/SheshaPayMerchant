@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect } from "react";
 
-function AccountingView({ merchantPayments, currencySymbol }) {
+function AccountingView({ merchantPayments, currencySymbol, loading }) {
   const [dateRange, setDateRange] = useState({
     start: new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString().split('T')[0], // 60 days back to cover all data
     end: new Date().toISOString().split('T')[0],
@@ -247,6 +247,21 @@ function AccountingView({ merchantPayments, currencySymbol }) {
     a.click();
     window.URL.revokeObjectURL(url);
   };
+
+  if (loading) {
+    return (
+      <div className="accounting-view">
+        <div className="vat-header">
+          <h2 className="merchant-name">Accounting Books</h2>
+        </div>
+        <div className="till-card" style={{ marginTop: "24px" }}>
+          <div className="skeleton-row" style={{ height: "20px", width: "40%", marginBottom: "12px" }} />
+          <div className="skeleton-row" style={{ height: "20px", width: "60%", marginBottom: "12px" }} />
+          <div className="skeleton-row" style={{ height: "20px", width: "50%" }} />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="accounting-view">

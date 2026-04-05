@@ -135,8 +135,13 @@ function EmployeesView({
       )}
 
       {employeesLoading ? (
-        <div className="processing" style={{ marginTop: "24px" }}>
-          Loading employees...
+        <div style={{ marginTop: "24px", display: "flex", flexDirection: "column", gap: "12px" }}>
+          {[1, 2, 3].map((n) => (
+            <div key={n} className="till-card">
+              <div className="skeleton-row" style={{ height: "18px", width: "40%", marginBottom: "8px" }} />
+              <div className="skeleton-row" style={{ height: "14px", width: "60%" }} />
+            </div>
+          ))}
         </div>
       ) : employees.length === 0 ? (
         <div className="till-card" style={{ marginTop: "24px" }}>

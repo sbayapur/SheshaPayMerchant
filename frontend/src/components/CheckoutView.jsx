@@ -54,22 +54,13 @@ function CheckoutView({
   // Scroll to top when confirm panel appears
   useEffect(() => {
     if (paymentStatus === "confirm") {
-      setTimeout(() => {
-        const phoneContent = document.querySelector('.phone-content');
-        if (phoneContent) {
-          phoneContent.scrollTop = 0;
-          phoneContent.scrollTo({ top: 0, behavior: 'instant' });
-        }
-      }, 150);
+      setTimeout(() => window.scrollTo({ top: 0, behavior: 'instant' }), 150);
     }
   }, [paymentStatus]);
 
-  // Ensure content can scroll to top on mount
+  // Scroll to top on mount
   useEffect(() => {
-    const phoneContent = document.querySelector('.phone-content');
-    if (phoneContent) {
-      phoneContent.scrollTop = 0;
-    }
+    window.scrollTo({ top: 0, behavior: 'instant' });
   }, []);
 
   const banks = [

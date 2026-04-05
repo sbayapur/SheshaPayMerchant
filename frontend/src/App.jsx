@@ -736,12 +736,7 @@ function App() {
     setPaymentStatus("confirm");
     setBankError(""); // Clear any errors
     // Scroll to top when confirm panel appears
-    setTimeout(() => {
-      const phoneContent = document.querySelector('.phone-content');
-      if (phoneContent) {
-        phoneContent.scrollTo({ top: 0, behavior: 'smooth' });
-      }
-    }, 100);
+    setTimeout(() => window.scrollTo({ top: 0, behavior: 'smooth' }), 100);
   };
 
   const handleSendReceipt = (event) => {

@@ -1090,6 +1090,7 @@ function MerchantDashboard({
               <AccountingView
                 merchantPayments={merchantPayments}
                 currencySymbol={currencySymbol}
+                loading={paymentsLoading}
               />
             ) : (
               /* WhatsApp Business Settings */
