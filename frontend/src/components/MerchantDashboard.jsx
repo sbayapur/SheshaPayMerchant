@@ -5,6 +5,8 @@ import { getAuthHeaders } from "../lib/apiAuth.js";
 import { supabase } from "../lib/supabase.js";
 import ReceiptItemsCard from "./ReceiptItemsCard.jsx";
 import PaymentsTable from "./PaymentsTable.jsx";
+import InsightsCard from "./InsightsCard.jsx";
+import ForecastPanel from "./ForecastPanel.jsx";
 import EmployeesView from "./EmployeesView.jsx";
 import AccountingView from "./AccountingView.jsx";
 import { formatZAR, devErr, devWarn } from "../lib/format.js";
@@ -1324,6 +1326,9 @@ function MerchantDashboard({
                 {merchantBank.bank === "Not linked" ? "Link bank" : "Update bank"}
               </button>
             </div>
+
+            <InsightsCard />
+            <ForecastPanel />
               </>
             ) : (
               <>

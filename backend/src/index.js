@@ -17,6 +17,9 @@ import {
   syncInvoiceToPersistedStores,
 } from "./orderHistoryStore.js";
 import { registerMerchantAdminPinRoutes } from "./merchantAdminPin.js";
+import { createWhatsAppAgent } from "./whatsappAgent.js";
+import { createAgentScheduler } from "./agentScheduler.js";
+import { createHmac } from "crypto";
 
 const app = express();
 // App Runner / ALB send X-Forwarded-For; express-rate-limit requires this or it throws (ERR_ERL_UNEXPECTED_X_FORWARDED_FOR)
@@ -101,7 +104,12 @@ const whatsappConfig = {
   wabaId: null,             // WhatsApp Business Account ID
   phoneNumberId: null,      // Registered phone number ID
   connectedAt: null,        // When the account was connected
+  merchantPhone: null,      // Merchant's personal WhatsApp number (for briefings)
 };
+
+// Merchant in-app notifications (agent alerts + morning briefings)
+const merchantNotifications = [];
+const MAX_NOTIFICATIONS = 100;
 
 // Meta app credentials (from environment variables)
 const META_APP_ID = process.env.META_APP_ID || "";
@@ -650,6 +658,107 @@ function findInvoiceByPaymentIntent(intentId) {
     }
   }
   return null;
+}
+
+// ─── Agent Helper Functions ───────────────────────────────────────────────────
+
+// Send a free-form text message to any WhatsApp number (requires WhatsApp connected).
+// Note: Meta only allows free-form text within a 24h customer service window.
+// For business-initiated proactive messages, a pre-approved template is required.
+async function sendWhatsAppTextMessage(toPhone, text) {
+  if (!whatsappConfig.connected || !whatsappConfig.accessToken || !whatsappConfig.phoneNumberId) {
+    throw new Error("WhatsApp not connected");
+  }
+  const phoneNumber = String(toPhone).replace(/\D/g, "");
+  const intlPhone = phoneNumber.startsWith("27") ? phoneNumber : `27${phoneNumber}`;
+  const response = await fetch(
+    `https://graph.facebook.com/${META_GRAPH_VERSION}/${whatsappConfig.phoneNumberId}/messages`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${whatsappConfig.accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        to: intlPhone,
+        type: "text",
+        text: { body: text },
+      }),
+    }
+  );
+  if (!response.ok) {
+    const err = await response.json();
+    throw new Error(err?.error?.message || "WhatsApp send failed");
+  }
+  return response.json();
+}
+
+// Create an invoice without an HTTP request context (used by the AI agent).
+function createInvoiceInternal({ amount, description, customerPhone, customerName = "", merchantName = "Sunrise Salon", currency = "ZAR" }) {
+  if (!amount || amount <= 0) throw new Error("amount must be positive");
+  if (!customerPhone) throw new Error("customerPhone is required");
+
+  const now = new Date();
+  const dueDate = new Date(now.getTime() + INVOICE_DUE_DAYS * 24 * 60 * 60 * 1000);
+  const invoiceId = `INV-${Date.now()}`;
+  const vatRate = 0.15;
+  const subtotal = amount / (1 + vatRate);
+  const taxAmount = amount - subtotal;
+
+  const token = generatePaymentLinkToken();
+  const isoRef = `SHESHA-${invoiceId}`;
+  const expiresAt = new Date(now.getTime() + PAYMENT_LINK_TTL_DAYS * 24 * 60 * 60 * 1000);
+  paymentLinks.set(token, {
+    orderId: invoiceId, amount: Number(amount), currency,
+    note: String(description), items: [], isoRef, merchantName,
+    createdAt: now.toISOString(), expiresAt: expiresAt.toISOString(), invoiceId,
+  });
+
+  const invoice = {
+    id: invoiceId, paymentIntentId: null, orderId: null, merchantName,
+    customerPhone, customerName, amount: Number(amount), subtotal, taxAmount,
+    currency, items: [], description, status: "UNPAID",
+    createdAt: now.toISOString(), dueDate: dueDate.toISOString(),
+    paidAt: null, cancelledAt: null, remindersSent: 0, lastReminderAt: null,
+    nextReminderAt: dueDate.toISOString(), maxReminders: MAX_REMINDERS_DEFAULT,
+    checkoutLink: `${CUSTOMER_BASE_URL}/pay/${token}`,
+  };
+
+  invoices.set(invoiceId, invoice);
+  scheduleInvoiceReminder(invoice);
+  console.log(`[Invoice/Agent] Created ${invoiceId} for ${customerPhone}`);
+  return invoice;
+}
+
+// Get aggregated transaction stats without an HTTP context.
+async function getStatsForPeriodInternal(period) {
+  const allowed = new Set(["all", "1day", "1month", "year"]);
+  const safePeriod = allowed.has(period) ? period : "all";
+  let rows = [];
+  if (supabaseAdmin) {
+    // No merchantId in scheduler context — read all rows (single-tenant)
+    try {
+      const { data, error } = await supabaseAdmin
+        .from("transactions")
+        .select("*")
+        .order("timestamp", { ascending: true })
+        .limit(5000);
+      if (!error) rows = data || [];
+    } catch (_) { /* fall through to in-memory */ }
+  }
+  if (rows.length === 0) {
+    for (const intent of paymentIntents.values()) {
+      const events = paymentIntentEvents.get(intent.id) || [];
+      for (const e of events) {
+        rows.push({
+          payment_intent_id: e.paymentIntentId,
+          status: e.status, timestamp: e.timestamp, amount: e.amount,
+        });
+      }
+    }
+  }
+  return aggregateTransactionLogStats(rows, safePeriod);
 }
 
 app.get("/health", (_req, res) => {
@@ -1821,7 +1930,441 @@ app.patch("/api/invoices/:id", (req, res) => {
   res.json(invoice);
 });
 
+// ─── Merchant Notifications ───────────────────────────────────────────────────
+
+// List in-app notifications (agent alerts + morning briefings)
+app.get("/api/merchant/notifications", (req, res) => {
+  const unreadOnly = req.query.unread === "true";
+  const result = unreadOnly
+    ? merchantNotifications.filter((n) => !n.read)
+    : merchantNotifications;
+  res.json([...result].reverse()); // newest first
+});
+
+// Mark a notification as read
+app.patch("/api/merchant/notifications/:id/read", (req, res) => {
+  const n = merchantNotifications.find((n) => n.id === req.params.id);
+  if (!n) return res.status(404).json({ error: "Notification not found" });
+  n.read = true;
+  res.json({ ok: true });
+});
+
+// Register the merchant's personal WhatsApp phone number (for morning briefings)
+app.post("/api/merchant/whatsapp-phone", async (req, res) => {
+  const merchantId = await getMerchantUserIdFromRequest(req);
+  if (!merchantId) return res.status(401).json({ error: "Unauthorized" });
+  const { phone } = req.body || {};
+  if (!phone) return res.status(400).json({ error: "phone is required" });
+  whatsappConfig.merchantPhone = String(phone).trim();
+  console.log(`[WhatsApp] Merchant phone registered: ${whatsappConfig.merchantPhone}`);
+  res.json({ ok: true, merchantPhone: whatsappConfig.merchantPhone });
+});
+
+// ─── Agent Control Endpoints ──────────────────────────────────────────────────
+
+// Manually trigger a follow-up scan or morning briefing (useful for testing)
+app.post("/api/agent/trigger", async (req, res) => {
+  const { action } = req.body || {};
+  if (!agentScheduler) return res.status(503).json({ error: "Agent scheduler not running" });
+
+  if (action === "follow_up") {
+    const result = await agentScheduler.runFollowUpScan();
+    return res.json({ ok: true, action, result });
+  }
+  if (action === "briefing") {
+    const result = await agentScheduler.runMorningBriefing();
+    return res.json({ ok: true, action, result });
+  }
+  return res.status(400).json({ error: "action must be 'follow_up' or 'briefing'" });
+});
+
+app.get("/api/agent/status", (_req, res) => {
+  if (!agentScheduler) return res.status(503).json({ error: "Agent scheduler not running" });
+  res.json(agentScheduler.getStatus());
+});
+
+// ─── Business Insights ────────────────────────────────────────────────────────
+
+let insightsCache = null; // { insights, mode, generatedAt, expiresAt }
+
+function buildInsightsContext() {
+  const DOW_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+  const settled = Array.from(paymentIntents.values()).filter(
+    (p) => p.status === "SETTLED" || p.status === "COMPLETED"
+  );
+
+  const clientMap = {};
+  for (const intent of settled) {
+    const key = intent.customerName || intent.customerPhone || "Unknown";
+    if (!clientMap[key]) clientMap[key] = { name: key, totalPaid: 0, count: 0 };
+    clientMap[key].totalPaid += intent.amount || 0;
+    clientMap[key].count++;
+  }
+  const topClients = Object.values(clientMap)
+    .sort((a, b) => b.totalPaid - a.totalPaid)
+    .slice(0, 5);
+
+  const allInvoices = Array.from(invoices.values());
+  const paidInvoices = allInvoices.filter((inv) => inv.status === "PAID" && inv.paidAt);
+  const unpaidInvoices = allInvoices.filter(
+    (inv) => inv.status === "UNPAID" || inv.status === "OVERDUE"
+  );
+
+  const avgDaysToPay =
+    paidInvoices.length > 0
+      ? Math.round(
+          paidInvoices.reduce(
+            (sum, inv) =>
+              sum +
+              (new Date(inv.paidAt) - new Date(inv.createdAt)) / (24 * 60 * 60 * 1000),
+            0
+          ) / paidInvoices.length
+        )
+      : null;
+
+  const dowRevenue = Array(7).fill(0);
+  for (const intent of settled) {
+    dowRevenue[new Date(intent.createdAt).getDay()] += intent.amount || 0;
+  }
+
+  return {
+    totalSettledCount: settled.length,
+    totalRevenue: settled.reduce((s, p) => s + (p.amount || 0), 0),
+    topClients,
+    avgDaysToPay,
+    unpaidCount: unpaidInvoices.length,
+    unpaidTotal: unpaidInvoices.reduce((s, inv) => s + inv.amount, 0),
+    revenueByDay: DOW_NAMES.map((day, i) => ({ day, revenue: dowRevenue[i] })).filter(
+      (d) => d.revenue > 0
+    ),
+  };
+}
+
+function mockInsightBullets(ctx) {
+  const fmt = (n) =>
+    `R${Number(n).toLocaleString("en-ZA", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+  const bullets = [];
+
+  if (ctx.topClients.length > 0) {
+    const top = ctx.topClients[0];
+    bullets.push(
+      `${top.name} is your top client — ${fmt(top.totalPaid)} across ${top.count} payment(s). Focus on keeping this relationship strong.`
+    );
+  } else {
+    bullets.push(
+      "No payment data yet. Create your first invoice to start tracking client revenue."
+    );
+  }
+
+  if (ctx.avgDaysToPay !== null) {
+    bullets.push(
+      `Invoices are paid in ${ctx.avgDaysToPay} day(s) on average. ${
+        ctx.avgDaysToPay <= 3
+          ? "That's a healthy cycle — keep sending invoices promptly."
+          : "Following up within 24 hours of the due date typically improves this."
+      }`
+    );
+  } else {
+    bullets.push(
+      "Mark your first invoice as paid to start tracking your payment cycle time."
+    );
+  }
+
+  if (ctx.unpaidTotal > 0) {
+    bullets.push(
+      `${fmt(ctx.unpaidTotal)} outstanding across ${ctx.unpaidCount} invoice(s). Collecting this would significantly boost your month's revenue.`
+    );
+  } else if (ctx.totalRevenue > 0) {
+    bullets.push(
+      `All invoices are settled. With ${fmt(ctx.totalRevenue)} total collected, now is a good time to send new invoices.`
+    );
+  } else {
+    bullets.push("Send your first payment request to start building revenue insights.");
+  }
+
+  return bullets;
+}
+
+app.get("/api/insights", async (_req, res) => {
+  if (insightsCache && insightsCache.expiresAt > Date.now()) {
+    return res.json(insightsCache);
+  }
+
+  const ctx = buildInsightsContext();
+
+  if (!process.env.ANTHROPIC_API_KEY) {
+    const result = {
+      insights: mockInsightBullets(ctx),
+      mode: "mock",
+      generatedAt: new Date().toISOString(),
+    };
+    insightsCache = { ...result, expiresAt: Date.now() + 5 * 60 * 1000 };
+    return res.json(result);
+  }
+
+  try {
+    const { default: Anthropic } = await import("@anthropic-ai/sdk");
+    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    const response = await anthropic.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      system: `You are a sharp business advisor for a South African freelancer using SheshaPay.
+
+Analyse the data and return exactly 3 actionable insights as a JSON array of strings.
+
+Rules:
+- Specific — use actual numbers and client names from the data
+- Actionable — each insight leads to a concrete next step
+- Format ZAR as R1,234.56
+- 1-2 sentences per insight maximum
+- If fewer than 3 payments exist, give growth-oriented advice rather than pattern analysis
+- No emojis
+
+Return ONLY a valid JSON array, nothing else.`,
+      messages: [{ role: "user", content: JSON.stringify(ctx, null, 2) }],
+      max_tokens: 400,
+    });
+
+    const text = response.content.find((b) => b.type === "text")?.text || "[]";
+    const match = text.match(/\[[\s\S]*\]/);
+    if (!match) throw new Error("No JSON array in response");
+
+    const insights = JSON.parse(match[0]);
+    const result = { insights, mode: "claude", generatedAt: new Date().toISOString() };
+    insightsCache = { ...result, expiresAt: Date.now() + 5 * 60 * 1000 };
+    return res.json(result);
+  } catch (err) {
+    console.error("[Insights]", err.message);
+    return res.json({
+      insights: mockInsightBullets(ctx),
+      mode: "mock",
+      generatedAt: new Date().toISOString(),
+    });
+  }
+});
+
+// ─── Cash Flow Forecast ───────────────────────────────────────────────────────
+
+function buildForecastContext() {
+  const now = Date.now();
+  const thirtyDays = 30 * 24 * 60 * 60 * 1000;
+
+  const outstanding = Array.from(invoices.values()).filter(
+    (inv) =>
+      (inv.status === "UNPAID" || inv.status === "OVERDUE") &&
+      new Date(inv.dueDate).getTime() <= now + thirtyDays
+  );
+
+  // Build client payment history from settled intents + paid invoices
+  const clientHistory = {};
+  for (const p of paymentIntents.values()) {
+    if (p.status !== "SETTLED" && p.status !== "COMPLETED") continue;
+    const key = p.customerName || p.customerPhone || "Unknown";
+    if (!clientHistory[key]) clientHistory[key] = { paidCount: 0, lateCount: 0 };
+    clientHistory[key].paidCount++;
+  }
+  for (const inv of invoices.values()) {
+    if (inv.status !== "PAID" || !inv.paidAt) continue;
+    const key = inv.customerName || inv.customerPhone || "Unknown";
+    if (!clientHistory[key]) clientHistory[key] = { paidCount: 0, lateCount: 0 };
+    clientHistory[key].paidCount++;
+    if (new Date(inv.paidAt) > new Date(inv.dueDate)) clientHistory[key].lateCount++;
+  }
+
+  const currentRevenue = Array.from(paymentIntents.values())
+    .filter((p) => p.status === "SETTLED" || p.status === "COMPLETED")
+    .reduce((s, p) => s + (p.amount || 0), 0);
+
+  const invoiceContext = outstanding.map((inv) => {
+    const key = inv.customerName || inv.customerPhone || "Unknown";
+    const history = clientHistory[key] || { paidCount: 0, lateCount: 0 };
+    return {
+      id: inv.id,
+      customerName: key,
+      amount: inv.amount,
+      daysUntilDue: Math.floor((new Date(inv.dueDate) - now) / (24 * 60 * 60 * 1000)),
+      remindersSent: inv.remindersSent,
+      clientPaidBefore: history.paidCount,
+      clientLateCount: history.lateCount,
+    };
+  });
+
+  return { invoiceContext, currentRevenue };
+}
+
+function ruleScoreForecast(invoiceContext) {
+  return invoiceContext.map((inv) => ({
+    id: inv.id,
+    customerName: inv.customerName,
+    amount: inv.amount,
+    daysUntilDue: inv.daysUntilDue,
+    likelihood:
+      inv.daysUntilDue < 0 || inv.clientPaidBefore === 0 || inv.clientLateCount > 0
+        ? "at-risk"
+        : "likely",
+    reason:
+      inv.daysUntilDue < 0
+        ? "already overdue"
+        : inv.clientPaidBefore === 0
+        ? "new client"
+        : inv.clientLateCount > 0
+        ? "has paid late before"
+        : "reliable payer",
+  }));
+}
+
+app.get("/api/forecast", async (_req, res) => {
+  const { invoiceContext, currentRevenue } = buildForecastContext();
+
+  if (invoiceContext.length === 0) {
+    return res.json({
+      forecast: [],
+      currentRevenue,
+      bestCase: currentRevenue,
+      conservativeCase: currentRevenue,
+      generatedAt: new Date().toISOString(),
+      mode: "mock",
+    });
+  }
+
+  let scored;
+
+  if (!process.env.ANTHROPIC_API_KEY) {
+    scored = ruleScoreForecast(invoiceContext);
+  } else {
+    try {
+      const { default: Anthropic } = await import("@anthropic-ai/sdk");
+      const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+      const response = await anthropic.messages.create({
+        model: "claude-haiku-4-5-20251001",
+        system: `You are a cash flow analyst for a South African small business.
+
+Score each outstanding invoice as "likely" or "at-risk" for payment within 7 days.
+
+- "likely": client has paid before (clientPaidBefore > 0), never been late (clientLateCount = 0), and invoice is not yet overdue (daysUntilDue >= 0)
+- "at-risk": new client, has been late before, invoice already overdue, or multiple reminders sent without response
+
+Return ONLY a JSON array adding "likelihood" and "reason" fields to each item. No other text.`,
+        messages: [{ role: "user", content: JSON.stringify(invoiceContext, null, 2) }],
+        max_tokens: 400,
+      });
+
+      const text = response.content.find((b) => b.type === "text")?.text || "[]";
+      const match = text.match(/\[[\s\S]*\]/);
+      if (!match) throw new Error("No JSON array");
+
+      const claudeScored = JSON.parse(match[0]);
+      scored = invoiceContext.map((inv) => {
+        const s = claudeScored.find((c) => c.id === inv.id) || {};
+        return {
+          id: inv.id,
+          customerName: inv.customerName,
+          amount: inv.amount,
+          daysUntilDue: inv.daysUntilDue,
+          likelihood: s.likelihood || "at-risk",
+          reason: s.reason || "unscored",
+        };
+      });
+    } catch (err) {
+      console.error("[Forecast]", err.message);
+      scored = ruleScoreForecast(invoiceContext);
+    }
+  }
+
+  const totalOutstanding = scored.reduce((s, inv) => s + inv.amount, 0);
+  const likelyTotal = scored
+    .filter((inv) => inv.likelihood === "likely")
+    .reduce((s, inv) => s + inv.amount, 0);
+
+  return res.json({
+    forecast: scored,
+    currentRevenue,
+    bestCase: currentRevenue + totalOutstanding,
+    conservativeCase: currentRevenue + likelyTotal,
+    generatedAt: new Date().toISOString(),
+    mode: process.env.ANTHROPIC_API_KEY ? "claude" : "mock",
+  });
+});
+
 // ─── WhatsApp Business Integration Endpoints ─────────────────────────────────
+
+// Meta webhook verification (GET) — echoes hub.challenge to confirm endpoint ownership
+app.get("/api/whatsapp/webhook", (req, res) => {
+  const mode = req.query["hub.mode"];
+  const token = req.query["hub.verify_token"];
+  const challenge = req.query["hub.challenge"];
+  const verifyToken = process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN;
+
+  if (!verifyToken) {
+    console.warn("[WhatsApp/Webhook] WHATSAPP_WEBHOOK_VERIFY_TOKEN not set");
+    return res.status(403).send("Webhook verify token not configured");
+  }
+  if (mode === "subscribe" && token === verifyToken) {
+    console.log("[WhatsApp/Webhook] Verification successful");
+    return res.status(200).send(challenge);
+  }
+  return res.status(403).send("Verification failed");
+});
+
+// Rate limiter for inbound WhatsApp messages
+const whatsappWebhookRateLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  message: { error: "Too many requests" },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// Meta webhook inbound handler (POST) — receives messages from merchants via WhatsApp
+app.post("/api/whatsapp/webhook", whatsappWebhookRateLimiter, async (req, res) => {
+  // Verify Meta signature
+  const signature = req.headers["x-hub-signature-256"];
+  if (META_APP_SECRET && signature) {
+    const expected = "sha256=" + createHmac("sha256", META_APP_SECRET)
+      .update(JSON.stringify(req.body))
+      .digest("hex");
+    if (signature !== expected) {
+      console.warn("[WhatsApp/Webhook] Invalid signature");
+      return res.status(403).json({ error: "Invalid signature" });
+    }
+  }
+
+  // Acknowledge immediately — Meta requires a 200 within 20s
+  res.status(200).send("OK");
+
+  try {
+    const entry = req.body?.entry?.[0];
+    const change = entry?.changes?.[0]?.value;
+    const messages = change?.messages;
+    if (!messages?.length) return;
+
+    for (const msg of messages) {
+      if (msg.type !== "text") continue; // skip non-text (images, voice, etc.)
+      const fromPhone = msg.from;
+      const text = msg.text?.body?.trim();
+      if (!text || !fromPhone) continue;
+
+      console.log(`[WhatsApp/Webhook] Inbound from ${fromPhone}: "${text.slice(0, 80)}"`);
+
+      if (!whatsappAgent) {
+        console.warn("[WhatsApp/Webhook] Agent not initialised");
+        continue;
+      }
+
+      const reply = await whatsappAgent.processMessage(fromPhone, text);
+
+      // Send reply back via WhatsApp
+      try {
+        await sendWhatsAppTextMessage(fromPhone, reply);
+      } catch (sendErr) {
+        console.error("[WhatsApp/Webhook] Failed to send reply:", sendErr.message);
+      }
+    }
+  } catch (err) {
+    console.error("[WhatsApp/Webhook] Error processing inbound message:", err.message);
+  }
+});
 
 // Get WhatsApp connection status
 app.get("/api/whatsapp/status", (_req, res) => {
@@ -1830,6 +2373,7 @@ app.get("/api/whatsapp/status", (_req, res) => {
     phoneNumberId: whatsappConfig.phoneNumberId || null,
     wabaId: whatsappConfig.wabaId || null,
     connectedAt: whatsappConfig.connectedAt || null,
+    merchantPhone: whatsappConfig.merchantPhone || null,
     // Never expose the access token
   });
 });
@@ -1919,14 +2463,34 @@ registerMerchantAdminPinRoutes(app, {
   supabaseAdmin,
 });
 
+// ─── Agent Instances (initialised in start()) ─────────────────────────────────
+let whatsappAgent = null;
+let agentScheduler = null;
+
 // ─── Server Start ────────────────────────────────────────────────────────────
 
 async function start() {
   await loadPaymentIntentsFromSupabase();
 
+  // Initialise agents
+  whatsappAgent = createWhatsAppAgent({
+    invoices,
+    createInvoiceInternal,
+    sendReminderForInvoice: sendReminder,
+    getStatsForPeriod: getStatsForPeriodInternal,
+  });
+
+  agentScheduler = createAgentScheduler({
+    invoices,
+    sendReminderForInvoice: sendReminder,
+    getStatsForPeriod: getStatsForPeriodInternal,
+    sendWhatsAppText: sendWhatsAppTextMessage,
+    whatsappConfig,
+    merchantNotifications,
+  });
+
   app.listen(port, () => {
     console.log(`Mock payment API listening on http://localhost:${port}`);
-    // Webhook events log is cleared on server restart (in-memory storage)
     console.log(`Webhook events log initialized (empty, will log up to ${MAX_EVENTS} events)`);
     console.log(`Invoice reminder system active (${INVOICE_DUE_DAYS}-day due period, ${MAX_REMINDERS_DEFAULT} max reminders)`);
     if (whatsappConfig.connected) {
@@ -1941,6 +2505,8 @@ async function start() {
     } else {
       console.warn("Stitch env vars not set; Stitch integration is disabled.");
     }
+
+    agentScheduler.start();
   });
 }
 
