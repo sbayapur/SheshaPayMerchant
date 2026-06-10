@@ -10,9 +10,58 @@ import ForecastPanel from "./ForecastPanel.jsx";
 import EmployeesView from "./EmployeesView.jsx";
 import AccountingView from "./AccountingView.jsx";
 import { formatZAR, devErr, devWarn } from "../lib/format.js";
+import MorningBriefingCard from "./MorningBriefingCard.jsx";
+import InvoiceAgentTab from "./InvoiceAgentTab.jsx";
 
 // Gate artificial delays behind VITE_DEMO_MODE so production feels instant
 const demoDelay = (ms) => import.meta.env.VITE_DEMO_MODE === 'true' ? ms : 0;
+
+// Static plumbing payments for demo accounting view (27 settled + 10 pending)
+function makeDemoPayments() {
+  const settled = [
+    { id:"ORD-1842", customerName:"Mrs Dlamini",            description:"Drain cleaning",           amount:  950, status:"SETTLED", createdAt:"2026-05-06T09:14:00" },
+    { id:"ORD-1841", customerName:"Acorn Properties",       description:"Geyser installation",       amount: 3500, status:"SETTLED", createdAt:"2026-05-05T11:30:00" },
+    { id:"ORD-1840", customerName:"Mr Mokoena",             description:"Burst pipe repair",         amount: 2200, status:"SETTLED", createdAt:"2026-05-04T08:05:00" },
+    { id:"ORD-1839", customerName:"StayEasy Apartments",    description:"Bathroom fitting",          amount: 4800, status:"SETTLED", createdAt:"2026-05-02T14:22:00" },
+    { id:"ORD-1828", customerName:"Acorn Properties",       description:"Monthly callout",           amount: 3500, status:"SETTLED", createdAt:"2026-04-28T10:00:00" },
+    { id:"ORD-1827", customerName:"Sandton Estates",        description:"Monthly maintenance",       amount: 2800, status:"SETTLED", createdAt:"2026-04-25T09:30:00" },
+    { id:"ORD-1826", customerName:"BuildRight Construction",description:"Pipe relining phase 1",     amount: 8500, status:"SETTLED", createdAt:"2026-04-22T07:45:00" },
+    { id:"ORD-1825", customerName:"Mrs Nkosi",              description:"Leaking tap repair",        amount:  750, status:"SETTLED", createdAt:"2026-04-20T13:10:00" },
+    { id:"ORD-1824", customerName:"Mr Sithole",             description:"Geyser installation",       amount: 3500, status:"SETTLED", createdAt:"2026-04-18T09:00:00" },
+    { id:"ORD-1823", customerName:"Sunrise Villas",         description:"Bathroom fitting",          amount: 4200, status:"SETTLED", createdAt:"2026-04-15T14:00:00" },
+    { id:"ORD-1822", customerName:"Khumalo Residence",      description:"Blocked drain",             amount: 1850, status:"SETTLED", createdAt:"2026-04-12T11:20:00" },
+    { id:"ORD-1821", customerName:"Cape Road Properties",   description:"Drain cleaning",            amount: 2850, status:"SETTLED", createdAt:"2026-04-10T15:30:00" },
+    { id:"ORD-1820", customerName:"Thabo Residence",        description:"Burst pipe repair",         amount: 1950, status:"SETTLED", createdAt:"2026-04-08T07:30:00" },
+    { id:"ORD-1819", customerName:"Acorn Properties",       description:"Emergency callout",         amount: 1200, status:"SETTLED", createdAt:"2026-04-05T19:00:00" },
+    { id:"ORD-1818", customerName:"Mr Dube",                description:"Hot water cylinder",        amount: 3200, status:"SETTLED", createdAt:"2026-04-03T08:45:00" },
+    { id:"ORD-1817", customerName:"StayEasy Apartments",    description:"Geyser installation",       amount: 3500, status:"SETTLED", createdAt:"2026-04-01T10:00:00" },
+    { id:"ORD-1816", customerName:"Mrs Zulu",               description:"Toilet cistern repair",     amount:  650, status:"SETTLED", createdAt:"2026-03-28T09:30:00" },
+    { id:"ORD-1815", customerName:"Sandton Estates",        description:"Monthly maintenance",       amount: 2800, status:"SETTLED", createdAt:"2026-03-25T09:00:00" },
+    { id:"ORD-1814", customerName:"BuildRight Construction",description:"Site inspection callout",   amount: 1500, status:"SETTLED", createdAt:"2026-03-22T08:00:00" },
+    { id:"ORD-1813", customerName:"Mr Mokoena",             description:"Geyser service",            amount: 1800, status:"SETTLED", createdAt:"2026-03-20T11:00:00" },
+    { id:"ORD-1812", customerName:"Acorn Properties",       description:"Bathroom refit",            amount: 5200, status:"SETTLED", createdAt:"2026-03-18T10:00:00" },
+    { id:"ORD-1811", customerName:"Cape Road Properties",   description:"Geyser installation",       amount: 3500, status:"SETTLED", createdAt:"2026-03-15T09:00:00" },
+    { id:"ORD-1810", customerName:"Mrs Dlamini",            description:"Blocked drain",             amount:  950, status:"SETTLED", createdAt:"2026-03-12T14:00:00" },
+    { id:"ORD-1809", customerName:"Sunrise Villas",         description:"Burst pipe repair",         amount: 2200, status:"SETTLED", createdAt:"2026-03-10T07:00:00" },
+    { id:"ORD-1808", customerName:"Mr Sithole",             description:"Drain cleaning",            amount:  950, status:"SETTLED", createdAt:"2026-03-08T15:00:00" },
+    { id:"ORD-1807", customerName:"Thabo Residence",        description:"Leaking tap repair",        amount:  750, status:"SETTLED", createdAt:"2026-03-05T13:00:00" },
+    { id:"ORD-1806", customerName:"StayEasy Apartments",    description:"Monthly maintenance",       amount: 2800, status:"SETTLED", createdAt:"2026-03-03T09:00:00" },
+  ];
+  const pending = [
+    { id:"ORD-1838", customerName:"Khumalo Residence",      description:"Blocked drain",             amount: 1850, status:"PENDING", createdAt:"2026-05-07T07:45:00" },
+    { id:"ORD-1837", customerName:"BuildRight Construction",description:"Pipe relining phase 2",     amount: 8500, status:"PENDING", createdAt:"2026-05-07T06:58:00" },
+    { id:"ORD-1836", customerName:"Mr Sithole",             description:"Geyser installation",       amount: 3500, status:"PENDING", createdAt:"2026-05-07T10:02:00" },
+    { id:"ORD-1835", customerName:"Sunrise Villas",         description:"Bathroom fitting",          amount: 4200, status:"PENDING", createdAt:"2026-05-06T15:33:00" },
+    { id:"ORD-1834", customerName:"Mrs Nkosi",              description:"Leaking tap repair",        amount:  750, status:"PENDING", createdAt:"2026-05-06T12:10:00" },
+    { id:"ORD-1833", customerName:"Sandton Estates",        description:"Monthly maintenance",       amount: 2800, status:"PENDING", createdAt:"2026-05-05T09:50:00" },
+    { id:"ORD-1832", customerName:"Mr Dube",                description:"Hot water cylinder",        amount: 3200, status:"PENDING", createdAt:"2026-05-05T16:20:00" },
+    { id:"ORD-1831", customerName:"Thabo Residence",        description:"Burst pipe repair",         amount: 1950, status:"PENDING", createdAt:"2026-05-04T07:30:00" },
+    { id:"ORD-1830", customerName:"Cape Road Properties",   description:"Drain cleaning",            amount: 2850, status:"PENDING", createdAt:"2026-05-04T13:45:00" },
+    { id:"ORD-1829", customerName:"Mrs Zulu",               description:"Toilet cistern repair",     amount:  650, status:"PENDING", createdAt:"2026-05-03T10:55:00" },
+  ];
+  return [...settled, ...pending];
+}
+const DEMO_ACCOUNTING_PAYMENTS = makeDemoPayments();
 
 function isValidSAPhone(value) {
   const digits = value.replace(/\D/g, '');
@@ -22,6 +71,7 @@ function isValidSAPhone(value) {
 }
 
 function MerchantDashboard({
+  isDemoMode = false,
   currencySymbol,
   merchantPayments,
   paymentsLoading,
@@ -65,6 +115,22 @@ function MerchantDashboard({
 
   const createPaymentLinkUrl = async (payment) => {
     if (!payment?.id || !payment?.amount) return null;
+
+    if (isDemoMode) {
+      const origin = window.location.origin;
+      const note = payment.description || payment.note || "";
+      const parts = [
+        `amount=${payment.amount}`,
+        `order=${encodeURIComponent(payment.id)}`,
+        `note=${encodeURIComponent(note)}`,
+        `merchant=${encodeURIComponent("Craig's Plumbing & Gas")}`,
+      ];
+      if (payment.items?.length > 0) {
+        parts.push(`items=${encodeURIComponent(JSON.stringify(payment.items))}`);
+      }
+      return `${origin}/pay?${parts.join("&")}`;
+    }
+
     try {
       const res = await fetch(`${API_BASE}/api/payment-links`, {
         method: "POST",
@@ -75,7 +141,7 @@ function MerchantDashboard({
           currency: payment.currency || "ZAR",
           note: payment.description || payment.note || "",
           items: payment.items || [],
-          merchantName: "Sunrise Salon",
+          merchantName: "Shesha Pay",
           baseUrl,
         }),
       });
@@ -205,7 +271,11 @@ function MerchantDashboard({
   const [createInvoiceDescriptionInput, setCreateInvoiceDescriptionInput] = useState("");
 
   // WhatsApp Business connection state
-  const [whatsappStatus, setWhatsappStatus] = useState({ connected: false });
+  const [whatsappStatus, setWhatsappStatus] = useState(
+    isDemoMode
+      ? { connected: true, phoneNumberId: "27851112233", connectedAt: "2026-04-15T08:00:00Z" }
+      : { connected: false }
+  );
   const [whatsappConnecting, setWhatsappConnecting] = useState(false);
 
   const ISO_STATES = [
@@ -377,7 +447,7 @@ function MerchantDashboard({
       const checkoutLink = invoice?.checkoutLink || (await createPaymentLinkUrl(payment));
       if (!checkoutLink) return;
       const message = encodeURIComponent(
-        `Hi! This is a friendly reminder that you have an unpaid invoice of R${payment.amount?.toFixed(2) || "0.00"} from Sunrise Salon.\n\nPlease pay here: ${checkoutLink}`
+        `Hi! This is a friendly reminder that you have an unpaid invoice of R${payment.amount?.toFixed(2) || "0.00"} from ${isDemoMode ? "Craig's Plumbing & Gas" : "Shesha Pay"}.\n\nPlease pay here: ${checkoutLink}`
       );
       window.open(`https://wa.me/${whatsappNumber}?text=${message}`, "_blank", "noopener,noreferrer");
     }
@@ -973,6 +1043,9 @@ function MerchantDashboard({
       case "1month":
         cutoffDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
         break;
+      case "thismonth":
+        cutoffDate = new Date(now.getFullYear(), now.getMonth(), 1);
+        break;
       case "year":
         cutoffDate = new Date(now.getFullYear(), 0, 1); // Start of current year
         break;
@@ -1005,13 +1078,15 @@ function MerchantDashboard({
   ).length;
 
   const useLogMetrics = logStats && !logStatsUseFallback;
-  const metricTotalReceived = useLogMetrics ? logStats.totalReceived : filteredTotalVolume;
-  const metricSettledCountDisplayed = useLogMetrics ? logStats.settledCount : filteredSettledCount;
-  const metricPendingCountDisplayed = useLogMetrics ? logStats.pendingCount : filteredPendingCount;
+  const metricTotalReceived = isDemoMode ? 11450 : (useLogMetrics ? logStats.totalReceived : filteredTotalVolume);
+  const metricSettledCountDisplayed = isDemoMode ? 27 : (useLogMetrics ? logStats.settledCount : filteredSettledCount);
+  const metricPendingCountDisplayed = isDemoMode ? 10 : (useLogMetrics ? logStats.pendingCount : filteredPendingCount);
+
+  const isAdminFullscreen = isDemoMode && currentMode === "admin";
 
   return (
-    <div className="app" ref={appRef}>
-      <div className="dashboard-card">
+    <div className={`app${isAdminFullscreen ? " app-fullscreen" : ""}`} ref={appRef}>
+      <div className={`dashboard-card${isAdminFullscreen ? " dashboard-card-fullscreen" : ""}`}>
         <div className="header-row">
           <div className="logo-with-title">
             <img
@@ -1020,7 +1095,7 @@ function MerchantDashboard({
               className="brand-logo"
             />
             <div>
-              <h1 className="merchant-name">Shesha Pay</h1>
+              <h1 className="merchant-name">{isDemoMode ? "Craig's Plumbing & Gas" : "Shesha Pay"}</h1>
             </div>
           </div>
           {onLogout && (
@@ -1068,6 +1143,22 @@ function MerchantDashboard({
                 Change PIN
               </button>
             </div>
+            <div className={`bank-card ${merchantBank.bank === "Not linked" ? "bank-card-unlinked" : ""}`} style={{ marginBottom: "20px" }}>
+              <div className="bank-card-content">
+                <p className="metric-label">Payout account</p>
+                {merchantBank.bank === "Not linked" ? (
+                  <p className="bank-unlinked-text">No bank account linked</p>
+                ) : (
+                  <p className="metric-value bank-account-value">
+                    {merchantBank.bank} {merchantBank.account ? `*${merchantBank.account}` : ""}
+                  </p>
+                )}
+              </div>
+              <button className="pay-button" onClick={handleLinkBankClick}>
+                {merchantBank.bank === "Not linked" ? "Link bank" : "Update bank"}
+              </button>
+            </div>
+
             <div className="admin-tabs" style={{ marginBottom: "24px" }}>
               <button
                 className={`admin-tab-button ${adminTab === "employees" ? "active" : ""}`}
@@ -1085,8 +1176,16 @@ function MerchantDashboard({
                 className={`admin-tab-button ${adminTab === "whatsapp" ? "active" : ""}`}
                 onClick={() => setAdminTab("whatsapp")}
               >
-                Connect WhatsApp Business
+                WhatsApp
               </button>
+              {isDemoMode && (
+                <button
+                  className={`admin-tab-button ${adminTab === "tax" ? "active" : ""}`}
+                  onClick={() => setAdminTab("tax")}
+                >
+                  Tax Report
+                </button>
+              )}
             </div>
 
             {/* Tab Content */}
@@ -1101,10 +1200,62 @@ function MerchantDashboard({
               />
             ) : adminTab === "accounting" ? (
               <AccountingView
-                merchantPayments={merchantPayments}
+                merchantPayments={isDemoMode ? DEMO_ACCOUNTING_PAYMENTS : merchantPayments}
                 currencySymbol={currencySymbol}
-                loading={paymentsLoading}
+                loading={isDemoMode ? false : paymentsLoading}
               />
+            ) : adminTab === "tax" ? (
+              /* Tax Report (demo only) */
+              <div style={{ marginTop: "16px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "20px" }}>
+                  <h3 style={{ margin: 0, fontSize: "1rem", color: "var(--text)" }}>SARS Provisional Tax</h3>
+                  <span style={{ fontSize: "0.72rem", fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", background: "#dcfce7", color: "#15803d", borderRadius: "20px", padding: "3px 10px" }}>
+                    Ready to submit
+                  </span>
+                </div>
+                <p style={{ margin: "0 0 20px", fontSize: "0.82rem", color: "var(--muted)" }}>
+                  Period: 1 Feb 2026 – 31 Jul 2026 &nbsp;·&nbsp; Generated by Shesha AI
+                </p>
+
+                {/* Income summary */}
+                <div style={{ background: "var(--bg)", border: "1px solid var(--border)", borderRadius: "12px", padding: "20px", marginBottom: "16px" }}>
+                  <p style={{ margin: "0 0 16px", fontWeight: 600, fontSize: "0.9rem" }}>Income summary</p>
+                  {[
+                    { label: "Total turnover",           amount: "R145,230.00", bold: false },
+                    { label: "Materials & parts",         amount: "− R28,400.00", muted: true },
+                    { label: "Fuel & vehicle",            amount: "− R12,600.00", muted: true },
+                    { label: "Tools & equipment",         amount: "−  R4,200.00", muted: true },
+                  ].map(({ label, amount, muted, bold }) => (
+                    <div key={label} style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: "1px solid var(--border)", fontSize: "0.875rem" }}>
+                      <span style={{ color: muted ? "var(--muted)" : "var(--text)" }}>{label}</span>
+                      <span style={{ fontWeight: bold ? 700 : 500, color: muted ? "var(--muted)" : "var(--text)" }}>{amount}</span>
+                    </div>
+                  ))}
+                  <div style={{ display: "flex", justifyContent: "space-between", padding: "12px 0 0", fontSize: "0.9rem" }}>
+                    <span style={{ fontWeight: 700 }}>Net income</span>
+                    <span style={{ fontWeight: 700 }}>R100,030.00</span>
+                  </div>
+                </div>
+
+                {/* Tax estimate */}
+                <div style={{ background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: "12px", padding: "20px", marginBottom: "20px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div>
+                      <p style={{ margin: 0, fontSize: "0.82rem", color: "#1e40af" }}>Estimated provisional tax</p>
+                      <p style={{ margin: "4px 0 0", fontSize: "1.5rem", fontWeight: 700, color: "#1e3a8a" }}>R28,008.40</p>
+                    </div>
+                    <div style={{ textAlign: "right" }}>
+                      <p style={{ margin: 0, fontSize: "0.75rem", color: "#1e40af" }}>Due date</p>
+                      <p style={{ margin: "4px 0 0", fontSize: "0.9rem", fontWeight: 600, color: "#1e3a8a" }}>31 Aug 2026</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{ display: "flex", gap: "12px" }}>
+                  <button className="ghost-button" style={{ flex: 1 }} onClick={() => {}}>Download PDF</button>
+                  <button className="pay-button" style={{ flex: 1 }} onClick={() => {}}>Submit to eFiling</button>
+                </div>
+              </div>
             ) : (
               /* WhatsApp Business Settings */
               <div style={{ marginTop: "16px" }}>
@@ -1212,6 +1363,89 @@ function MerchantDashboard({
                       ))}
                   </div>
                 )}
+
+                {/* Demo: mock messages + jobs */}
+                {isDemoMode && (
+                  <>
+                    <div style={{ marginTop: "24px" }}>
+                      <p style={{ margin: "0 0 12px", fontWeight: 600, fontSize: "0.9rem" }}>Messages sent today</p>
+                      {[
+                        { time: "07:52", to: "BuildRight Construction", msg: "Hi, your invoice of R8,500 (Pipe relining) is overdue. Please pay: shesha.pay/p/ORD-1837 🔧", type: "reminder" },
+                        { time: "08:10", to: "Khumalo Residence",       msg: "Hi, your invoice of R1,850 (Blocked drain) is due in 2 days. Pay here: shesha.pay/p/ORD-1838", type: "reminder" },
+                        { time: "08:45", to: "Mr Sithole",              msg: "Hi Sithole, confirming your geyser installation tomorrow at 9am. Reply YES to confirm. 🚰",        type: "job" },
+                        { time: "09:03", to: "Acorn Properties",        msg: "Hi, invoice #ORD-1841 for R3,500 has been settled. Thank you for your payment! ✅",                  type: "confirmed" },
+                        { time: "09:30", to: "Mrs Nkosi",               msg: "Hi Mrs Nkosi, job dispatched: Leaking tap repair today between 2–4pm. Craig is on his way. 📍",    type: "job" },
+                      ].map(({ time, to, msg, type }) => (
+                        <div key={time + to} style={{
+                          borderBottom: "1px solid var(--border)",
+                          padding: "12px 0",
+                          display: "flex",
+                          gap: "12px",
+                          alignItems: "flex-start",
+                        }}>
+                          <span style={{
+                            marginTop: "2px",
+                            fontSize: "0.75rem",
+                            color: "var(--muted)",
+                            minWidth: "36px",
+                          }}>{time}</span>
+                          <div style={{ flex: 1 }}>
+                            <p style={{ margin: "0 0 3px", fontSize: "0.82rem", fontWeight: 600, color: "var(--text)" }}>{to}</p>
+                            <p style={{ margin: 0, fontSize: "0.80rem", color: "var(--muted)", lineHeight: 1.5 }}>{msg}</p>
+                          </div>
+                          <span style={{
+                            fontSize: "0.68rem",
+                            fontWeight: 700,
+                            textTransform: "uppercase",
+                            letterSpacing: "0.05em",
+                            borderRadius: "20px",
+                            padding: "2px 8px",
+                            whiteSpace: "nowrap",
+                            background: type === "confirmed" ? "#dcfce7" : type === "job" ? "#eff6ff" : "#fef9c3",
+                            color:      type === "confirmed" ? "#15803d" : type === "job" ? "#1e40af" : "#854d0e",
+                          }}>
+                            {type === "confirmed" ? "paid" : type === "job" ? "dispatched" : "reminder"}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div style={{ marginTop: "24px" }}>
+                      <p style={{ margin: "0 0 12px", fontWeight: 600, fontSize: "0.9rem" }}>Jobs in queue</p>
+                      {[
+                        { client: "Sunrise Villas",    job: "Bathroom fitting",    slot: "Tomorrow, 10am",   status: "confirmed" },
+                        { client: "Mr Dube",           job: "Hot water cylinder",  slot: "Thu 9 May, 8am",   status: "pending" },
+                        { client: "Cape Road Properties", job: "Drain cleaning",   slot: "Thu 9 May, 2pm",   status: "pending" },
+                        { client: "Sandton Estates",   job: "Monthly maintenance", slot: "Fri 10 May, 9am",  status: "confirmed" },
+                      ].map(({ client, job, slot, status }) => (
+                        <div key={client} style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "center",
+                          padding: "10px 0",
+                          borderBottom: "1px solid var(--border)",
+                        }}>
+                          <div>
+                            <p style={{ margin: 0, fontSize: "0.85rem", fontWeight: 600 }}>{client}</p>
+                            <p style={{ margin: "2px 0 0", fontSize: "0.78rem", color: "var(--muted)" }}>{job} · {slot}</p>
+                          </div>
+                          <span style={{
+                            fontSize: "0.68rem",
+                            fontWeight: 700,
+                            textTransform: "uppercase",
+                            letterSpacing: "0.05em",
+                            borderRadius: "20px",
+                            padding: "2px 8px",
+                            background: status === "confirmed" ? "#dcfce7" : "#fef9c3",
+                            color:      status === "confirmed" ? "#15803d" : "#854d0e",
+                          }}>
+                            {status}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
               </div>
             )}
           </>
@@ -1232,18 +1466,26 @@ function MerchantDashboard({
                 Checkout Mode
               </button>
               <button
+                className={`admin-tab-button ${currentMode === "invoices" ? "active" : ""}`}
+                onClick={() => setCurrentMode("invoices")}
+              >
+                Invoice Agent
+              </button>
+              <button
                 className="admin-tab-button"
                 onClick={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
-                  void openAdminPinFlow();
+                  if (isDemoMode) { setCurrentMode("admin"); } else { void openAdminPinFlow(); }
                 }}
               >
                 Admin Mode
               </button>
             </div>
 
-            {currentMode === "dashboard" ? (
+            {currentMode === "invoices" ? (
+              <InvoiceAgentTab />
+            ) : currentMode === "dashboard" ? (
               <>
                 {/* Dashboard Tab - Metrics and Payout Account */}
             {/* Time Period Selector */}
@@ -1266,10 +1508,16 @@ function MerchantDashboard({
                 Last 1 Day
               </button>
               <button
+                className={`time-period-button ${timePeriod === "thismonth" ? "active" : ""}`}
+                onClick={() => setTimePeriod("thismonth")}
+              >
+                This Month
+              </button>
+              <button
                 className={`time-period-button ${timePeriod === "1month" ? "active" : ""}`}
                 onClick={() => setTimePeriod("1month")}
               >
-                Last 1 Month
+                Last 30 Days
               </button>
               <button
                 className={`time-period-button ${timePeriod === "year" ? "active" : ""}`}
@@ -1311,24 +1559,12 @@ function MerchantDashboard({
               </div>
             </div>
 
-            <div className={`bank-card ${merchantBank.bank === "Not linked" ? "bank-card-unlinked" : ""}`}>
-              <div className="bank-card-content">
-                <p className="metric-label">Payout account</p>
-                {merchantBank.bank === "Not linked" ? (
-                  <p className="bank-unlinked-text">No bank account linked</p>
-                ) : (
-                  <p className="metric-value bank-account-value">
-                    {merchantBank.bank} {merchantBank.account ? `*${merchantBank.account}` : ""}
-                  </p>
-                )}
-              </div>
-              <button className="pay-button" onClick={handleLinkBankClick}>
-                {merchantBank.bank === "Not linked" ? "Link bank" : "Update bank"}
-              </button>
-            </div>
+            {isDemoMode && <MorningBriefingCard isDemoMode />}
 
-            <InsightsCard />
-            <ForecastPanel />
+            <div className="agentic-two-col">
+              <InsightsCard isDemoMode={isDemoMode} />
+              <ForecastPanel isDemoMode={isDemoMode} />
+            </div>
               </>
             ) : (
               <>
@@ -2024,6 +2260,28 @@ function MerchantDashboard({
             <p className="payment-subtext qr-subtext">
               Instant, secure bank payment • No app needed
             </p>
+            {qrPreview.linkUrl && (
+              <a
+                href={qrPreview.linkUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{
+                  display: "block",
+                  marginTop: "12px",
+                  padding: "10px 14px",
+                  background: "var(--bg)",
+                  border: "1px solid var(--border)",
+                  borderRadius: "8px",
+                  fontSize: "0.75rem",
+                  color: "var(--accent, #2563eb)",
+                  wordBreak: "break-all",
+                  textDecoration: "none",
+                  textAlign: "center",
+                }}
+              >
+                {qrPreview.linkUrl}
+              </a>
+            )}
             {qrPreview.payment && onCopyCheckoutLink && (
               <button
                 className="copy-checkout-link-button"
