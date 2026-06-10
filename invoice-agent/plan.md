@@ -20,9 +20,9 @@ Chat-style invoice generation for Craig (Durban Plumbing). Craig describes a job
 | 3 | Chat UI shell | ✅ Done |
 | 4 | /api/parse-invoice (Claude) | ✅ Done |
 | 5 | Invoice preview card | ✅ Done (in step 3/4) |
-| 6 | /api/send-invoice + Resend | ⏳ Next |
-| 7 | Public /invoice/[id] page | ⏳ Pending |
-| 8 | /sent invoices list | ⏳ Pending |
+| 6 | /api/send-invoice + Resend | ✅ Done |
+| 7 | Public /invoice/[id] page | ✅ Done |
+| 8 | /sent invoices list | ✅ Done |
 
 ## Routes
 - `/`              — Chat interface (Craig)
