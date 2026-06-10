@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { Resend } from "resend";
+import { SESClient, SendEmailCommand } from "@aws-sdk/client-ses";
 import { createServerClient } from "@/lib/supabase";
 import { buildInvoiceEmail } from "@/lib/invoiceEmail";
 import { ParsedInvoice } from "@/types/invoice";
@@ -44,18 +44,25 @@ export async function POST(req: NextRequest) {
   const invoiceUrl = `${appUrl}/invoice/${invoice.id}`;
   const html = buildInvoiceEmail(body, invoiceUrl);
 
-  // Send email via Resend (lazy init so build succeeds without env vars)
-  const resend = new Resend(process.env.RESEND_API_KEY);
-  const { error: emailError } = await resend.emails.send({
-    from: "Craig @ Durban Plumbing <invoices@sheshapay.co.za>",
-    to: customer_email,
-    subject: `Invoice from Durban Plumbing — R${total.toFixed(2)} due ${due_date}`,
-    html,
-  });
-
-  if (emailError) {
-    console.error("Resend error:", emailError);
-    // Invoice is saved — return success with a warning so the UI still proceeds
+  // SES client — credentials from env vars locally, IAM role on Amplify
+  const ses = new SESClient({ region: process.env.AWS_REGION ?? "eu-west-1" });
+  try {
+    await ses.send(
+      new SendEmailCommand({
+        Source: "Craig @ Durban Plumbing <invoices@sheshapay.co.za>",
+        Destination: { ToAddresses: [customer_email] },
+        Message: {
+          Subject: {
+            Data: `Invoice from Durban Plumbing — R${total.toFixed(2)} due ${due_date}`,
+            Charset: "UTF-8",
+          },
+          Body: { Html: { Data: html, Charset: "UTF-8" } },
+        },
+      })
+    );
+  } catch (emailError) {
+    console.error("SES error:", emailError);
+    // Invoice is saved — return success with warning so the UI still proceeds
     return NextResponse.json({ id: invoice.id, invoiceUrl, emailWarning: "Email delivery failed" });
   }
 
