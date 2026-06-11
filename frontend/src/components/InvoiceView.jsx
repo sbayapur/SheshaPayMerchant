@@ -126,14 +126,24 @@ export default function InvoiceView() {
       </div>
 
       <div className="pay-section">
-        <button className="pay-button" disabled style={{ opacity: 0.6, cursor: "not-allowed" }}>
-          <div className="pay-button-content">
-            <div className="pay-icon">🏦</div>
-            <div className="pay-label">Pay by bank — Coming soon</div>
-          </div>
-          <div className="pay-arrow">›</div>
-        </button>
-        <p className="demo-note">Bank-to-bank payment via SheshaPay is coming soon.</p>
+        <div style={{ textAlign: "center" }}>
+          <p style={{ margin: "0 0 12px", fontSize: 13, color: "var(--muted, #6b7280)", fontWeight: 500 }}>
+            Scan to pay with SnapScan
+          </p>
+          <img
+            src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(`https://pos.snapscan.io/qr/DurbanPlumbing?id=${invoice.id}&amount=${Math.round(invoice.total * 100)}&strict=true`)}`}
+            alt="SnapScan QR code"
+            width={200}
+            height={200}
+            style={{ borderRadius: 12, border: "1px solid var(--border, #e5e7eb)", display: "block", margin: "0 auto 12px" }}
+          />
+          <p style={{ margin: "0 0 4px", fontSize: 15, fontWeight: 700, color: "var(--text, #111827)" }}>
+            {formatZAR(invoice.total)}
+          </p>
+          <p style={{ margin: 0, fontSize: 12, color: "var(--muted, #6b7280)" }}>
+            Ref: {invoice.id}
+          </p>
+        </div>
       </div>
 
       <div className="security-row">
