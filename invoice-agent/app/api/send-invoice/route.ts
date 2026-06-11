@@ -45,7 +45,15 @@ export async function POST(req: NextRequest) {
   const html = buildInvoiceEmail(body, invoiceUrl);
 
   // SES client — credentials from env vars locally, IAM role on Amplify
-  const ses = new SESClient({ region: process.env.AWS_REGION ?? "us-east-2" });
+  const ses = new SESClient({
+    region: process.env.APP_AWS_REGION ?? "us-east-2",
+    ...(process.env.APP_AWS_ACCESS_KEY_ID && {
+      credentials: {
+        accessKeyId: process.env.APP_AWS_ACCESS_KEY_ID,
+        secretAccessKey: process.env.APP_AWS_SECRET_ACCESS_KEY!,
+      },
+    }),
+  });
   try {
     await ses.send(
       new SendEmailCommand({
