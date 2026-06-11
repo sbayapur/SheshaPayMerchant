@@ -45,11 +45,11 @@ export async function POST(req: NextRequest) {
   const html = buildInvoiceEmail(body, invoiceUrl);
 
   // SES client — credentials from env vars locally, IAM role on Amplify
-  const ses = new SESClient({ region: process.env.AWS_REGION ?? "eu-west-1" });
+  const ses = new SESClient({ region: process.env.AWS_REGION ?? "us-east-2" });
   try {
     await ses.send(
       new SendEmailCommand({
-        Source: "Craig @ Durban Plumbing <invoices@sheshapay.co.za>",
+        Source: "Craig @ Durban Plumbing <invoices@sheshapay.co>",
         Destination: { ToAddresses: [customer_email] },
         Message: {
           Subject: {
