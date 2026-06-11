@@ -19,6 +19,7 @@ import {
 import { registerMerchantAdminPinRoutes } from "./merchantAdminPin.js";
 import { createWhatsAppAgent } from "./whatsappAgent.js";
 import { createAgentScheduler } from "./agentScheduler.js";
+import { invoiceAgentRouter } from "./invoiceAgent.js";
 import { createHmac } from "crypto";
 
 const app = express();
@@ -760,6 +761,8 @@ async function getStatsForPeriodInternal(period) {
   }
   return aggregateTransactionLogStats(rows, safePeriod);
 }
+
+app.use("/api/agent", invoiceAgentRouter);
 
 app.get("/health", (_req, res) => {
   res.json({

@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { formatZAR, formatDateZA } from "../lib/format.js";
 
-const INVOICE_API = (import.meta.env.VITE_INVOICE_AGENT_URL || "http://localhost:3000").replace(/\/$/, "");
+const INVOICE_API = (import.meta.env.VITE_API_BASE || "http://localhost:4000").replace(/\/$/, "");
 
 const GREETING = "Hi Craig! Tell me about a job you just completed and I'll generate an invoice. For example: \"Fixed a burst pipe for John Smith at 5 Berea Road, 2 hours labour at R450/hr plus R320 in parts, due in 14 days, john@example.com\"";
 
@@ -24,7 +24,7 @@ function InvoicePreview({ invoice, onEdit }) {
     setSending(true);
     setError(null);
     try {
-      const res = await fetch(`${INVOICE_API}/api/send-invoice`, {
+      const res = await fetch(`${INVOICE_API}/api/agent/send-invoice`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(invoice),
@@ -204,7 +204,7 @@ export default function InvoiceAgentTab() {
     setInvoice(null);
 
     try {
-      const res = await fetch(`${INVOICE_API}/api/parse-invoice`, {
+      const res = await fetch(`${INVOICE_API}/api/agent/parse-invoice`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: text, history: messages }),

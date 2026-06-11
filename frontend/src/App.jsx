@@ -6,6 +6,7 @@ import TabletFrame from "./components/TabletFrame.jsx";
 import LoginScreen from "./components/LoginScreen.jsx";
 import CheckoutView from "./components/CheckoutView.jsx";
 import SuccessView from "./components/SuccessView.jsx";
+import InvoiceView from "./components/InvoiceView.jsx";
 import { supabase } from "./lib/supabase.js";
 import { getApiBase } from "./lib/api.js";
 import { getAuthHeaders } from "./lib/apiAuth.js";
@@ -25,6 +26,10 @@ function calculateTotals(items) {
   const tax = subtotal * 0.15;
   const total = subtotal + tax;
   return { subtotal, tax, total };
+}
+
+function isInvoicePath() {
+  return window.location.pathname.startsWith("/invoice/");
 }
 
 function viewFromPath() {
@@ -1181,6 +1186,10 @@ function App() {
   const receiptTotal = merchantReceiptTotals.total;
   const receiptSubtotal = merchantReceiptTotals.subtotal;
   const receiptTax = merchantReceiptTotals.tax;
+
+  if (isInvoicePath()) {
+    return <InvoiceView />;
+  }
 
   if (view === "checkout") {
     return (
