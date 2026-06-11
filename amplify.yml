@@ -1,17 +1,36 @@
 version: 1
-frontend:
-  phases:
-    preBuild:
-      commands:
-        - npm ci
-        - npm ci --prefix frontend
-    build:
-      commands:
-        - npm --prefix frontend run build
-  artifacts:
-    baseDirectory: frontend/dist
-    files:
-      - '**/*'
-  cache:
-    paths:
-      - frontend/node_modules/**/*
+applications:
+  - appRoot: frontend
+    frontend:
+      phases:
+        preBuild:
+          commands:
+            - npm ci
+            - npm ci --prefix frontend
+        build:
+          commands:
+            - npm --prefix frontend run build
+      artifacts:
+        baseDirectory: frontend/dist
+        files:
+          - '**/*'
+      cache:
+        paths:
+          - frontend/node_modules/**/*
+  - appRoot: invoice-agent
+    frontend:
+      phases:
+        preBuild:
+          commands:
+            - npm ci
+        build:
+          commands:
+            - npm run build
+      artifacts:
+        baseDirectory: .next
+        files:
+          - '**/*'
+      cache:
+        paths:
+          - node_modules/**/*
+          - .next/cache/**/*
