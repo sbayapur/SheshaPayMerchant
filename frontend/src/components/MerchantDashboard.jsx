@@ -873,29 +873,6 @@ function MerchantDashboard({
     const paymentDescription =
       paymentToAdd.description || paymentToAdd.note || "";
     
-    // Create payment intent on backend so status can be tracked
-    let paymentIntentId = null;
-    try {
-      const apiBase = API_BASE;
-      const piRes = await fetch(`${apiBase}/api/payment-intents`, {
-        method: "POST",
-        headers: await getAuthHeaders({ "Content-Type": "application/json" }),
-        body: JSON.stringify({
-          amount: paymentToAdd.amount,
-          currency: paymentToAdd.currency || "ZAR",
-          description: paymentDescription,
-          orderId: paymentToAdd.id, // Use the same orderId
-        }),
-      });
-      if (piRes.ok) {
-        const piData = await piRes.json();
-        paymentIntentId = piData.id;
-      }
-    } catch (err) {
-      console.warn("Failed to create payment intent on backend:", err);
-      // Continue anyway - payment will be added locally
-    }
-
     // Always create an agent invoice so the QR links to InvoiceView (SnapScan + I've paid)
     const lineItems = (paymentToAdd.items || []).map((item) => ({
       description: item.name,
@@ -938,7 +915,6 @@ function MerchantDashboard({
             method: "POST",
             headers: await getAuthHeaders({ "Content-Type": "application/json" }),
             body: JSON.stringify({
-              paymentIntentId,
               orderId: paymentToAdd.id,
               customerPhone: phone,
               amount: paymentToAdd.amount,
@@ -965,14 +941,14 @@ function MerchantDashboard({
     setCreateInvoiceCustomerName("");
     setCreateInvoiceCustomerEmail("");
 
-    // Add payment to list
-    if (onAddPayment) {
-      onAddPayment(paymentToAdd);
-    }
-
-    // Generate QR — pass invoiceUrl so it links to InvoiceView instead of checkout
+    // Open the invoice in a new tab
     if (onGenerateQr) {
       onGenerateQr({ ...paymentToAdd, invoiceUrl });
+    }
+
+    // Refresh table from Supabase so the new invoice row appears with correct status tracking
+    if (onRefreshPayments) {
+      void onRefreshPayments();
     }
 
     if (onClearReceiptItems) {

@@ -42,7 +42,7 @@ Rules:
 - due_date: calculate from phrases like "due in 14 days". If not mentioned, default to 30 days from today.
 - confidence_notes: list any assumptions you made. Empty array if none.
 - All amounts are in ZAR as plain numbers (not strings).
-- Do not invent prices. If a price is ambiguous, ask.`;
+- Do not invent or assume prices. If the price for ANY line item (including labour, call-out fees, hourly rates, or materials) is not explicitly stated by the user, respond with needs_info and ask for it. Never infer typical rates.`;
 
 // POST /api/agent/parse-invoice
 router.post("/parse-invoice", async (req, res) => {
