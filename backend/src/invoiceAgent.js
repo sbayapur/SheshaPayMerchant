@@ -90,7 +90,7 @@ router.post("/parse-invoice", async (req, res) => {
 router.post("/send-invoice", async (req, res) => {
   const { customer_name, customer_email, line_items, subtotal, total, due_date } = req.body || {};
 
-  if (!customer_name || !customer_email || !line_items?.length || !due_date) {
+  if (!customer_name || !line_items?.length || !due_date) {
     return res.status(400).json({ error: "Missing required invoice fields" });
   }
 
@@ -98,7 +98,7 @@ router.post("/send-invoice", async (req, res) => {
     return res.status(503).json({ error: "Database not configured" });
   }
 
-  const sendEmail = req.body.sendEmail !== false;
+  const sendEmail = req.body.sendEmail !== false && !!customer_email;
 
   const { data: invoice, error: dbError } = await supabaseAdmin
     .from("invoices")

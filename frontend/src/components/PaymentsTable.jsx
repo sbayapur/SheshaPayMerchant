@@ -63,7 +63,7 @@ function PaymentsTable({
   return (
     <div className="payments-table-container">
       <div className="payments-table-header">
-        <h2 className="merchant-name">Order History</h2>
+        <h2 className="merchant-name">Invoice History</h2>
         {onRefresh && (
           <button 
             className="ghost-button" 

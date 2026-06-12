@@ -896,13 +896,45 @@ function MerchantDashboard({
       // Continue anyway - payment will be added locally
     }
 
-    // If customer phone is provided, create an invoice (with reminder timer)
+    // Always create an agent invoice so the QR links to InvoiceView (SnapScan + I've paid)
+    const lineItems = (paymentToAdd.items || []).map((item) => ({
+      description: item.name,
+      quantity: item.quantity || 1,
+      unit_price: item.price,
+      total: item.price * (item.quantity || 1),
+    }));
+    const invoiceSubtotal = lineItems.reduce((s, i) => s + i.total, 0);
+    const dueDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
+    const invoiceEmail = createInvoiceCustomerEmail.trim();
+    let invoiceUrl = null;
+    try {
+      const invRes = await fetch(`${API_BASE}/api/agent/send-invoice`, {
+        method: "POST",
+        headers: await getAuthHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({
+          customer_name: createInvoiceCustomerName.trim() || "Customer",
+          customer_email: invoiceEmail || null,
+          line_items: lineItems,
+          subtotal: invoiceSubtotal,
+          total: paymentToAdd.amount,
+          due_date: dueDate,
+          sendEmail: !!invoiceEmail,
+        }),
+      });
+      if (invRes.ok) {
+        const invData = await invRes.json();
+        invoiceUrl = invData.invoiceUrl || null;
+      }
+    } catch (err) {
+      console.warn("Failed to create agent invoice:", err);
+    }
+
+    // Also create phone-based invoice if phone provided (enables WhatsApp reminders)
     if (phone) {
-      const checkoutLink = await createPaymentLinkUrl(paymentToAdd);
+      const checkoutLink = invoiceUrl || await createPaymentLinkUrl(paymentToAdd).catch(() => null);
       if (checkoutLink) {
         try {
-          const apiBase = API_BASE;
-          await fetch(`${apiBase}/api/invoices`, {
+          await fetch(`${API_BASE}/api/invoices`, {
             method: "POST",
             headers: await getAuthHeaders({ "Content-Type": "application/json" }),
             body: JSON.stringify({
@@ -920,38 +952,8 @@ function MerchantDashboard({
           });
           fetchInvoices();
         } catch (err) {
-          console.warn("Failed to create invoice on backend:", err);
+          console.warn("Failed to create phone invoice:", err);
         }
-      }
-    }
-    
-    // If customer email provided, also write to agent invoices table for unified tracking
-    const invoiceEmail = createInvoiceCustomerEmail.trim();
-    if (invoiceEmail) {
-      const lineItems = (paymentToAdd.items || []).map((item) => ({
-        description: item.name,
-        quantity: item.quantity || 1,
-        unit_price: item.price,
-        total: item.price * (item.quantity || 1),
-      }));
-      const subtotal = lineItems.reduce((s, i) => s + i.total, 0);
-      const dueDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
-      try {
-        await fetch(`${API_BASE}/api/agent/send-invoice`, {
-          method: "POST",
-          headers: await getAuthHeaders({ "Content-Type": "application/json" }),
-          body: JSON.stringify({
-            customer_name: createInvoiceCustomerName.trim() || invoiceEmail,
-            customer_email: invoiceEmail,
-            line_items: lineItems,
-            subtotal,
-            total: paymentToAdd.amount,
-            due_date: dueDate,
-            sendEmail: false,
-          }),
-        });
-      } catch (err) {
-        console.warn("Failed to write to invoices table:", err);
       }
     }
 
@@ -968,9 +970,9 @@ function MerchantDashboard({
       onAddPayment(paymentToAdd);
     }
 
-    // Generate QR
+    // Generate QR — pass invoiceUrl so it links to InvoiceView instead of checkout
     if (onGenerateQr) {
-      onGenerateQr(paymentToAdd);
+      onGenerateQr({ ...paymentToAdd, invoiceUrl });
     }
 
     if (onClearReceiptItems) {
@@ -1114,15 +1116,13 @@ function MerchantDashboard({
   const filteredSettledCount = filteredPayments.filter(
     (p) => p.status === "SETTLED" || p.status === "succeeded"
   ).length;
-  const filteredPendingCount = filteredPayments.filter((p) => 
-    p.status === "PENDING" || 
-    (p.status !== "SETTLED" && p.status !== "succeeded" && p.status !== "FAILED")
+  const filteredPendingCount = filteredPayments.filter(
+    (p) => p.status === "PENDING" || p.status === "CUSTOMER_CLAIMED_PAID"
   ).length;
 
-  const useLogMetrics = logStats && !logStatsUseFallback;
-  const metricTotalReceived = isDemoMode ? 11450 : (useLogMetrics ? logStats.totalReceived : filteredTotalVolume);
-  const metricSettledCountDisplayed = isDemoMode ? 27 : (useLogMetrics ? logStats.settledCount : filteredSettledCount);
-  const metricPendingCountDisplayed = isDemoMode ? 10 : (useLogMetrics ? logStats.pendingCount : filteredPendingCount);
+  const metricTotalReceived = isDemoMode ? 11450 : filteredTotalVolume;
+  const metricSettledCountDisplayed = isDemoMode ? 27 : filteredSettledCount;
+  const metricPendingCountDisplayed = isDemoMode ? 10 : filteredPendingCount;
 
   return (
     <div className="app" ref={appRef}>
@@ -1242,15 +1242,6 @@ function MerchantDashboard({
                 This Year
               </button>
             </div>
-
-            {!logStatsLoading && logStatsUseFallback && (
-              <p
-                className="metric-hint"
-                style={{ fontSize: "0.8rem", color: "var(--text-secondary)", margin: "0 0 12px" }}
-              >
-                Log-based stats unavailable; showing figures from the order list.
-              </p>
-            )}
 
             <div className="metrics">
               <div className="metric">

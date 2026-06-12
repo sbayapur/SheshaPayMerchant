@@ -924,16 +924,16 @@ function App() {
   const handleGenerateQr = async (payment) => {
     if (!payment) return;
     try {
-      const paymentLink = await createPaymentLink(payment);
-      if (!paymentLink) {
-        showToast("Failed to create payment link", "error");
+      const linkUrl = payment.invoiceUrl || await createPaymentLink(payment);
+      if (!linkUrl) {
+        showToast("Failed to create invoice link", "error");
         return;
       }
-      const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(paymentLink)}`;
+      const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(linkUrl)}`;
       setQrPreview({ id: payment.id, url: qrUrl, open: true, payment });
     } catch (err) {
-      console.error("Failed to create payment link", err);
-      showToast(err.message || "Failed to create payment link", "error");
+      console.error("Failed to create invoice link", err);
+      showToast(err.message || "Failed to create invoice link", "error");
     }
   };
 
@@ -1182,7 +1182,7 @@ function App() {
     if (status === "AUTHORISED") return "Authorised";
     if (status === "PENDING") return "Pending";
     if (status === "FAILED") return "Failed";
-    if (status === "CUSTOMER_CLAIMED_PAID") return "Awaiting verification";
+    if (status === "CUSTOMER_CLAIMED_PAID") return "Paid — verify";
     if (status === "succeeded") return "Completed";
     if (status === "requires_action") return "Authorised";
     if (status === "requires_payment_method") return "Pending";
