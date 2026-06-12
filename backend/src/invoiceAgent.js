@@ -113,7 +113,7 @@ router.post("/send-invoice", async (req, res) => {
 
   const merchantUserId = await getMerchantUserIdFromRequest(req);
   if (merchantUserId) {
-    void upsertMerchantOrderRecord({
+    await upsertMerchantOrderRecord({
       merchantUserId,
       customerId: null,
       orderId: invoice.id,

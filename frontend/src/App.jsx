@@ -104,13 +104,23 @@ function enrichPaymentsWithPersistedOrders(normalized, savedRows) {
       savedByIntentId.get(item.id) ||
       savedByOrderId.get(String(item.orderId || "")) ||
       savedByOrderId.get(String(item.id || ""));
+    // When merchant_orders has a meaningful terminal/customer status, override the
+    // payment-intent status so the dashboard reflects what happened on the invoice side.
+    const ps = saved?.status;
+    const statusOverride =
+      ps === "CUSTOMER_CLAIMED_PAID" ? "CUSTOMER_CLAIMED_PAID"
+      : ps === "PAID" ? "SETTLED"
+      : ps === "CANCELLED" ? "CANCELLED"
+      : null;
     return {
       ...item,
+      ...(statusOverride && { status: statusOverride }),
       ...(saved && {
         savedCustomerPhone: saved.customers?.phone_normalized,
         savedCustomerName: saved.customers?.display_name,
         savedMerchantOrderId: saved.id,
         persistedOrderStatus: saved.status,
+        agentInvoiceId: saved.invoice_id || item.agentInvoiceId || null,
       }),
     };
   });

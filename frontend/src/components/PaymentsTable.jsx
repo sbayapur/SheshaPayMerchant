@@ -158,7 +158,7 @@ function PaymentsTable({
                         className="ghost-button"
                         type="button"
                         onClick={() => onViewQr(p)}
-                        disabled={!p.id || persistedOnly}
+                        disabled={!p.id || (persistedOnly && !p.agentInvoiceId)}
                       >
                         Show Invoice
                       </button>
