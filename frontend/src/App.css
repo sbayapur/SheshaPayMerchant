@@ -551,6 +551,44 @@ body {
   font-size: 0.95rem;
 }
 
+.snapscan-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 24px 20px;
+  text-align: center;
+}
+
+.snapscan-label {
+  margin: 0 0 14px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.snapscan-qr {
+  display: block;
+  margin: 0 auto 16px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+}
+
+.snapscan-amount {
+  margin: 0 0 4px;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--navy);
+}
+
+.snapscan-ref {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--muted);
+  font-family: 'Courier New', monospace;
+}
+
 .confirm-panel {
   margin-top: 8px;
   padding: 12px;

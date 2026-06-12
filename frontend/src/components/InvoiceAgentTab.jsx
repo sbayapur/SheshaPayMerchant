@@ -14,33 +14,32 @@ const bg = "var(--bg)";
 
 // ── Invoice Preview ───────────────────────────────────────────────────────────
 
-function InvoicePreview({ invoice, onEdit }) {
-  const [sending, setSending] = useState(false);
-  const [sent, setSent] = useState(false);
-  const [invoiceUrl, setInvoiceUrl] = useState(null);
+function InvoicePreview({ invoice, onEdit, onSent }) {
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState(null); // { invoiceUrl, stored }
   const [error, setError] = useState(null);
 
-  async function handleSend() {
-    setSending(true);
+  async function submit(sendEmail) {
+    setBusy(true);
     setError(null);
     try {
       const res = await fetch(`${INVOICE_API}/api/agent/send-invoice`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(invoice),
+        body: JSON.stringify({ ...invoice, sendEmail }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to send");
-      setSent(true);
-      setInvoiceUrl(data.invoiceUrl);
+      if (!res.ok) throw new Error(data.error || "Failed");
+      setResult({ invoiceUrl: data.invoiceUrl, stored: data.stored });
+      onSent?.();
     } catch (err) {
-      setError(err.message || "Failed to send invoice");
+      setError(err.message || "Something went wrong");
     } finally {
-      setSending(false);
+      setBusy(false);
     }
   }
 
-  if (sent) {
+  if (result) {
     return (
       <div style={{ borderRadius: 12, border: `1px solid ${border}`, background: card, overflow: "hidden", maxWidth: 480 }}>
         <div style={{ padding: "24px 20px", display: "flex", flexDirection: "column", alignItems: "center", gap: 12, textAlign: "center" }}>
@@ -49,12 +48,16 @@ function InvoicePreview({ invoice, onEdit }) {
               <polyline points="20 6 9 17 4 12" />
             </svg>
           </div>
-          <p style={{ margin: 0, fontWeight: 600, color: text }}>Invoice sent!</p>
-          <p style={{ margin: 0, fontSize: 13, color: muted }}>
-            Email delivered to <strong>{invoice.customer_email}</strong>
+          <p style={{ margin: 0, fontWeight: 600, color: text }}>
+            {result.stored ? "Invoice stored!" : "Invoice sent!"}
           </p>
-          {invoiceUrl && (
-            <a href={invoiceUrl} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: accent, textDecoration: "none" }}>
+          <p style={{ margin: 0, fontSize: 13, color: muted }}>
+            {result.stored
+              ? `Saved as a draft — no email sent to ${invoice.customer_email}.`
+              : `Email delivered to `}{result.stored ? null : <strong>{invoice.customer_email}</strong>}
+          </p>
+          {result.invoiceUrl && (
+            <a href={result.invoiceUrl} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: accent, textDecoration: "none" }}>
               View invoice page →
             </a>
           )}
@@ -152,19 +155,92 @@ function InvoicePreview({ invoice, onEdit }) {
       {/* Actions */}
       <div style={{ padding: "14px 18px", borderTop: `1px solid ${border}`, display: "flex", gap: 8 }}>
         <button
-          onClick={onEdit}
-          style={{ flex: 1, borderRadius: 8, border: `1px solid ${border}`, background: "transparent", padding: "9px 0", fontSize: 13, fontWeight: 500, color: text, cursor: "pointer" }}
+          onClick={() => submit(false)}
+          disabled={busy}
+          style={{ flex: 1, borderRadius: 8, border: `1px solid ${border}`, background: "transparent", padding: "9px 0", fontSize: 13, fontWeight: 500, color: text, cursor: busy ? "not-allowed" : "pointer", opacity: busy ? 0.6 : 1 }}
         >
-          Edit
+          {busy ? "Saving…" : "Store Invoice"}
         </button>
         <button
-          onClick={handleSend}
-          disabled={sending}
-          style={{ flex: 1, borderRadius: 8, border: "none", background: accent, padding: "9px 0", fontSize: 13, fontWeight: 600, color: "white", cursor: sending ? "not-allowed" : "pointer", opacity: sending ? 0.6 : 1 }}
+          onClick={() => submit(true)}
+          disabled={busy}
+          style={{ flex: 1, borderRadius: 8, border: "none", background: accent, padding: "9px 0", fontSize: 13, fontWeight: 600, color: "white", cursor: busy ? "not-allowed" : "pointer", opacity: busy ? 0.6 : 1 }}
         >
-          {sending ? "Sending…" : "Send Invoice"}
+          {busy ? "Sending…" : "Send Invoice"}
         </button>
       </div>
+    </div>
+  );
+}
+
+// ── Sent Invoices List ────────────────────────────────────────────────────────
+
+function statusBadge(status, dueDate) {
+  const isOverdue = status === "sent" && new Date(dueDate) < new Date();
+  const resolved = isOverdue ? "overdue" : status;
+  const styles = {
+    sent:    { background: "#eff6ff", color: "#1d4ed8" },
+    overdue: { background: "#fef2f2", color: "#dc2626" },
+    paid:    { background: "#f0fdf4", color: "#166534" },
+  };
+  const s = styles[resolved] || styles.sent;
+  return (
+    <span style={{ ...s, fontSize: 10, fontWeight: 600, padding: "2px 7px", borderRadius: 99, textTransform: "capitalize" }}>
+      {resolved}
+    </span>
+  );
+}
+
+function SentInvoicesList({ refreshKey }) {
+  const [invoices, setInvoices] = useState(null);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    fetch(`${INVOICE_API}/api/agent/invoices`)
+      .then((r) => { if (!r.ok) throw new Error("Failed"); return r.json(); })
+      .then(setInvoices)
+      .catch(() => setError("Could not load invoices."));
+  }, [refreshKey]);
+
+  const frontendBase = (import.meta.env.VITE_API_BASE || "http://localhost:4000")
+    .replace(/\/+$/, "")
+    .replace(/:\d+$/, ":5173")
+    .replace(/api\./, "");
+
+  if (error) return <p style={{ padding: 24, textAlign: "center", color: "var(--muted)", fontSize: 13 }}>{error}</p>;
+  if (!invoices) return <p style={{ padding: 24, textAlign: "center", color: "var(--muted)", fontSize: 13 }}>Loading…</p>;
+  if (!invoices.length) return <p style={{ padding: 24, textAlign: "center", color: "var(--muted)", fontSize: 13 }}>No invoices sent yet.</p>;
+
+  return (
+    <div style={{ overflowY: "auto", flex: 1, padding: "12px 0" }}>
+      {invoices.map((inv) => (
+        <a
+          key={inv.id}
+          href={`/invoice/${inv.id}`}
+          target="_blank"
+          rel="noreferrer"
+          style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 16px", textDecoration: "none", borderBottom: `1px solid ${border}`, transition: "background 0.1s" }}
+          onMouseEnter={(e) => e.currentTarget.style.background = bg}
+          onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+        >
+          <div style={{ width: 32, height: 32, borderRadius: 8, background: "#f0fdf4", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={accent} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
+            </svg>
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <p style={{ margin: 0, fontSize: 13, fontWeight: 600, color: text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+              {inv.customer_name}
+            </p>
+            <p style={{ margin: "2px 0 0", fontSize: 11, color: muted }}>{inv.customer_email} · Due {formatDateZA(inv.due_date)}</p>
+          </div>
+          <div style={{ textAlign: "right", flexShrink: 0 }}>
+            <p style={{ margin: "0 0 3px", fontSize: 13, fontWeight: 700, color: accent }}>{formatZAR(inv.total)}</p>
+            {statusBadge(inv.status, inv.due_date)}
+          </div>
+        </a>
+      ))}
     </div>
   );
 }
@@ -172,6 +248,8 @@ function InvoicePreview({ invoice, onEdit }) {
 // ── Invoice Agent Chat Tab ────────────────────────────────────────────────────
 
 export default function InvoiceAgentTab() {
+  const [view, setView] = useState("chat"); // "chat" | "sent"
+  const [sentRefreshKey, setSentRefreshKey] = useState(0);
   const [messages, setMessages] = useState([
     { role: "assistant", content: GREETING },
   ]);
@@ -253,14 +331,29 @@ export default function InvoiceAgentTab() {
           <p style={{ margin: 0, fontSize: 13, fontWeight: 600, color: text, lineHeight: 1 }}>Invoice Agent</p>
           <p style={{ margin: "3px 0 0", fontSize: 11, color: muted }}>AI-powered invoicing · Durban Plumbing</p>
         </div>
-        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6 }}>
-          <span style={{ width: 7, height: 7, borderRadius: "50%", background: accent, display: "inline-block" }} />
-          <span style={{ fontSize: 11, color: muted }}>Online</span>
+        <div style={{ marginLeft: "auto", display: "flex", gap: 4 }}>
+          {["chat", "sent"].map((v) => (
+            <button
+              key={v}
+              onClick={() => { setView(v); if (v === "sent") setSentRefreshKey((k) => k + 1); }}
+              style={{
+                padding: "5px 12px", borderRadius: 7, border: "none", fontSize: 12, fontWeight: 600, cursor: "pointer",
+                background: view === v ? accent : "transparent",
+                color: view === v ? "white" : muted,
+                transition: "background 0.15s, color 0.15s",
+              }}
+            >
+              {v === "chat" ? "New" : "Sent"}
+            </button>
+          ))}
         </div>
       </div>
 
+      {/* Sent list */}
+      {view === "sent" && <SentInvoicesList refreshKey={sentRefreshKey} />}
+
       {/* Chat area */}
-      <div style={{ flex: 1, overflowY: "auto", padding: "16px", display: "flex", flexDirection: "column", gap: 12 }}>
+      {view === "chat" && <div style={{ flex: 1, overflowY: "auto", padding: "16px", display: "flex", flexDirection: "column", gap: 12 }}>
         {messages.map((msg, i) => (
           <div key={i} style={{ display: "flex", justifyContent: msg.role === "user" ? "flex-end" : "flex-start", alignItems: "flex-start", gap: 8 }}>
             {msg.role === "assistant" && (
@@ -309,7 +402,7 @@ export default function InvoiceAgentTab() {
 
         {invoice && (
           <div style={{ marginTop: 4 }}>
-            <InvoicePreview invoice={invoice} onEdit={handleEdit} />
+            <InvoicePreview invoice={invoice} onEdit={handleEdit} onSent={() => setSentRefreshKey((k) => k + 1)} />
           </div>
         )}
 
@@ -317,7 +410,7 @@ export default function InvoiceAgentTab() {
       </div>
 
       {/* Input bar */}
-      <div style={{ flexShrink: 0, background: card, borderTop: `1px solid ${border}`, padding: "12px 16px" }}>
+      {view === "chat" && <div style={{ flexShrink: 0, background: card, borderTop: `1px solid ${border}`, padding: "12px 16px" }}>
         <div style={{ display: "flex", alignItems: "flex-end", gap: 8 }}>
           <textarea
             ref={textareaRef}
@@ -369,7 +462,7 @@ export default function InvoiceAgentTab() {
           </button>
         </div>
         <p style={{ margin: "6px 0 0", textAlign: "center", fontSize: 11, color: muted }}>Enter to send · Shift+Enter for new line</p>
-      </div>
+      </div>}
 
       <style>{`
         @keyframes bounce {

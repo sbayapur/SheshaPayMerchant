@@ -96,9 +96,11 @@ router.post("/send-invoice", async (req, res) => {
     return res.status(503).json({ error: "Database not configured" });
   }
 
+  const sendEmail = req.body.sendEmail !== false;
+
   const { data: invoice, error: dbError } = await supabaseAdmin
     .from("invoices")
-    .insert({ merchant_id: "craig-demo", customer_name, customer_email, line_items, subtotal, total, due_date, status: "sent" })
+    .insert({ merchant_id: "craig-demo", customer_name, customer_email, line_items, subtotal, total, due_date, status: sendEmail ? "sent" : "draft" })
     .select("id")
     .single();
 
@@ -109,6 +111,11 @@ router.post("/send-invoice", async (req, res) => {
 
   const frontendUrl = (process.env.FRONTEND_BASE_URL || "http://localhost:5173").replace(/\/+$/, "");
   const invoiceUrl = `${frontendUrl}/invoice/${invoice.id}`;
+
+  if (!sendEmail) {
+    return res.json({ id: invoice.id, invoiceUrl, stored: true });
+  }
+
   const html = buildInvoiceEmail(req.body, invoiceUrl);
 
   try {
@@ -128,6 +135,24 @@ router.post("/send-invoice", async (req, res) => {
   }
 
   res.json({ id: invoice.id, invoiceUrl });
+});
+
+// GET /api/agent/invoices  — list all invoices for this merchant
+router.get("/invoices", async (req, res) => {
+  if (!supabaseAdmin) {
+    return res.status(503).json({ error: "Database not configured" });
+  }
+  const { data, error } = await supabaseAdmin
+    .from("invoices")
+    .select("id, customer_name, customer_email, total, due_date, status, created_at")
+    .eq("merchant_id", "craig-demo")
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    console.error("[invoices] Supabase error:", error);
+    return res.status(500).json({ error: "Failed to fetch invoices" });
+  }
+  res.json(data || []);
 });
 
 // GET /api/agent/invoices/:id  — public, for the invoice view page

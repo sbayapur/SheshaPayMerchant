@@ -36,6 +36,7 @@ function PaymentsTable({
     if (payment.savedCustomerName || payment.savedCustomerPhone) {
       return [payment.savedCustomerName, payment.savedCustomerPhone].filter(Boolean).join(" · ");
     }
+    if (payment.customerName) return payment.customerName;
     return "—";
   };
 
@@ -153,7 +154,7 @@ function PaymentsTable({
                         onClick={() => onViewQr(p)}
                         disabled={!p.id || persistedOnly}
                       >
-                        Show QR
+                        Show Invoice
                       </button>
                       {onSendInvoice && (
                         <button

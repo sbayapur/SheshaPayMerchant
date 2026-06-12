@@ -126,23 +126,17 @@ export default function InvoiceView() {
       </div>
 
       <div className="pay-section">
-        <div style={{ textAlign: "center" }}>
-          <p style={{ margin: "0 0 12px", fontSize: 13, color: "var(--muted, #6b7280)", fontWeight: 500 }}>
-            Scan to pay with SnapScan
-          </p>
+        <div className="snapscan-card">
+          <p className="snapscan-label">Scan to pay with SnapScan</p>
           <img
             src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(`https://pos.snapscan.io/qr/DurbanPlumbing?id=${invoice.id}&amount=${Math.round(invoice.total * 100)}&strict=true`)}`}
             alt="SnapScan QR code"
             width={200}
             height={200}
-            style={{ borderRadius: 12, border: "1px solid var(--border, #e5e7eb)", display: "block", margin: "0 auto 12px" }}
+            className="snapscan-qr"
           />
-          <p style={{ margin: "0 0 4px", fontSize: 15, fontWeight: 700, color: "var(--text, #111827)" }}>
-            {formatZAR(invoice.total)}
-          </p>
-          <p style={{ margin: 0, fontSize: 12, color: "var(--muted, #6b7280)" }}>
-            Ref: {invoice.id}
-          </p>
+          <p className="snapscan-amount">{formatZAR(invoice.total)}</p>
+          <p className="snapscan-ref">Ref: {invoice.id}</p>
         </div>
       </div>
 
@@ -156,7 +150,7 @@ export default function InvoiceView() {
           <span>256-bit encryption</span>
         </div>
       </div>
-      <p className="security-note">Payments will be processed securely via PayShap instant bank transfer.</p>
+      <p className="security-note">Open SnapScan on your phone and scan the code above to pay securely.</p>
     </div>
   );
 }

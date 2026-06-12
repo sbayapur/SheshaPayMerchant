@@ -32,6 +32,11 @@ function isInvoicePath() {
   return window.location.pathname.startsWith("/invoice/");
 }
 
+function initialTabFromPath() {
+  if (window.location.pathname === "/invoice-agent") return "invoices";
+  return "dashboard";
+}
+
 function viewFromPath() {
   const path = window.location.pathname.toLowerCase();
   if (path === "/pay" || path.startsWith("/pay/")) return "checkout";
@@ -1314,6 +1319,7 @@ function App() {
       <>
         <TabletFrame>
           <MerchantDashboard
+          initialTab={initialTabFromPath()}
           currencySymbol={CURRENCY_SYMBOL}
           merchantPayments={merchantPayments}
           paymentsLoading={paymentsLoading}

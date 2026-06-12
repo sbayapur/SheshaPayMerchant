@@ -72,6 +72,7 @@ function isValidSAPhone(value) {
 
 function MerchantDashboard({
   isDemoMode = false,
+  initialTab = "dashboard",
   currencySymbol,
   merchantPayments,
   paymentsLoading,
@@ -157,7 +158,7 @@ function MerchantDashboard({
     }
   };
 
-  const [currentMode, setCurrentMode] = useState("dashboard"); // "dashboard", "checkout", or "admin"
+  const [currentMode, setCurrentMode] = useState(initialTab); // "dashboard", "checkout", or "admin"
   const [adminTab, setAdminTab] = useState("employees"); // "employees" or "accounting"
   const [showBankAuthModal, setShowBankAuthModal] = useState(false);
   const [selectedBank, setSelectedBank] = useState("");
@@ -1463,7 +1464,7 @@ function MerchantDashboard({
                 className={`admin-tab-button ${currentMode === "checkout" ? "active" : ""}`}
                 onClick={() => setCurrentMode("checkout")}
               >
-                Checkout Mode
+                Invoices
               </button>
               <button
                 className={`admin-tab-button ${currentMode === "invoices" ? "active" : ""}`}
@@ -1695,7 +1696,7 @@ function MerchantDashboard({
                     onClick={handleShowQr}
                     style={{ width: "100%" }}
                   >
-                    Show QR
+                    Show Invoice
                   </button>
                   <button
                     className="bank-auth-button"
