@@ -1259,7 +1259,10 @@ function App() {
   const handleLogin = () => {
     setIsLoggedIn(true);
     setView("merchant");
-    window.history.pushState({}, "", "/");
+    // Only reset to "/" if we're not on a meaningful merchant path like /invoice-agent
+    if (!initialTabFromPath || initialTabFromPath() === "dashboard") {
+      window.history.pushState({}, "", "/");
+    }
   };
 
   const handleLoginError = (message) => {
