@@ -15,6 +15,7 @@ import {
   markMerchantOrdersPaidForIntent,
   markMerchantOrdersPaidForInvoiceId,
   syncInvoiceToPersistedStores,
+  upsertMerchantOrderRecord,
 } from "./orderHistoryStore.js";
 import { registerMerchantAdminPinRoutes } from "./merchantAdminPin.js";
 import { createWhatsAppAgent } from "./whatsappAgent.js";
@@ -1678,6 +1679,22 @@ app.post("/api/payment-links", async (req, res) => {
   };
 
   paymentLinks.set(token, linkData);
+
+  if (merchant_user_id) {
+    void upsertMerchantOrderRecord({
+      merchantUserId: merchant_user_id,
+      customerId: null,
+      orderId,
+      invoiceId: invoiceId || null,
+      paymentIntentId: null,
+      amount: Number(amount),
+      currency,
+      items: Array.isArray(items) ? items : [],
+      description: note || null,
+      status: "PENDING",
+    });
+  }
+
   const linkBase = CUSTOMER_BASE_URL || (baseUrl || "").replace(/\/+$/, "") || FRONTEND_BASE_URL;
   const url = `${linkBase}/pay/${token}`;
 
