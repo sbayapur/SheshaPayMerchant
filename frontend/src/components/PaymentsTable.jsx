@@ -38,6 +38,11 @@ function PaymentsTable({
       return [payment.savedCustomerName, payment.savedCustomerPhone].filter(Boolean).join(" · ");
     }
     if (payment.customerName) return payment.customerName;
+    // Extract customer name from agent invoice description "Invoice for <name>"
+    if (payment.description) {
+      const match = payment.description.match(/^Invoice for (.+)$/i);
+      if (match) return match[1];
+    }
     return "—";
   };
 

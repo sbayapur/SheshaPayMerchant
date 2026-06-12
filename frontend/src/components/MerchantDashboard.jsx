@@ -159,8 +159,12 @@ function MerchantDashboard({
     }
   };
 
-  const [currentMode, setCurrentMode] = useState(initialTab); // "dashboard", "checkout", or "admin"
-  const [adminTab, setAdminTab] = useState("employees"); // "employees" or "accounting"
+  const [currentMode, setCurrentMode] = useState(initialTab);
+
+  // Respond to deep-link tab changes (e.g. /invoice-agent while already mounted)
+  useEffect(() => {
+    if (initialTab && initialTab !== "dashboard") setCurrentMode(initialTab);
+  }, [initialTab]);
   const [showBankAuthModal, setShowBankAuthModal] = useState(false);
   const [selectedBank, setSelectedBank] = useState("");
   const [isAuthenticating, setIsAuthenticating] = useState(false);
@@ -271,6 +275,8 @@ function MerchantDashboard({
   const [customerPhoneInput, setCustomerPhoneInput] = useState("");
   /** Optional free-text note on the Create Invoice modal (combined with line-item summary for invoices / payments). */
   const [createInvoiceDescriptionInput, setCreateInvoiceDescriptionInput] = useState("");
+  const [createInvoiceCustomerName, setCreateInvoiceCustomerName] = useState("");
+  const [createInvoiceCustomerEmail, setCreateInvoiceCustomerEmail] = useState("");
 
   // WhatsApp Business connection state
   const [whatsappStatus, setWhatsappStatus] = useState(
@@ -919,17 +925,49 @@ function MerchantDashboard({
       }
     }
     
+    // If customer email provided, also write to agent invoices table for unified tracking
+    const invoiceEmail = createInvoiceCustomerEmail.trim();
+    if (invoiceEmail) {
+      const lineItems = (paymentToAdd.items || []).map((item) => ({
+        description: item.name,
+        quantity: item.quantity || 1,
+        unit_price: item.price,
+        total: item.price * (item.quantity || 1),
+      }));
+      const subtotal = lineItems.reduce((s, i) => s + i.total, 0);
+      const dueDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
+      try {
+        await fetch(`${API_BASE}/api/agent/send-invoice`, {
+          method: "POST",
+          headers: await getAuthHeaders({ "Content-Type": "application/json" }),
+          body: JSON.stringify({
+            customer_name: createInvoiceCustomerName.trim() || invoiceEmail,
+            customer_email: invoiceEmail,
+            line_items: lineItems,
+            subtotal,
+            total: paymentToAdd.amount,
+            due_date: dueDate,
+            sendEmail: false,
+          }),
+        });
+      } catch (err) {
+        console.warn("Failed to write to invoices table:", err);
+      }
+    }
+
     // Close modal first to prevent double-clicks
     setShowCreateInvoiceOptions(false);
     setPendingPayment(null);
     setCustomerPhoneInput("");
     setCreateInvoiceDescriptionInput("");
-    
+    setCreateInvoiceCustomerName("");
+    setCreateInvoiceCustomerEmail("");
+
     // Add payment to list
     if (onAddPayment) {
       onAddPayment(paymentToAdd);
     }
-    
+
     // Generate QR
     if (onGenerateQr) {
       onGenerateQr(paymentToAdd);
@@ -1028,6 +1066,8 @@ function MerchantDashboard({
     setShowCreateInvoiceOptions(false);
     setPendingPayment(null);
     setCreateInvoiceDescriptionInput("");
+    setCreateInvoiceCustomerName("");
+    setCreateInvoiceCustomerEmail("");
     setCustomerPhoneInput("");
   };
 
@@ -1084,11 +1124,9 @@ function MerchantDashboard({
   const metricSettledCountDisplayed = isDemoMode ? 27 : (useLogMetrics ? logStats.settledCount : filteredSettledCount);
   const metricPendingCountDisplayed = isDemoMode ? 10 : (useLogMetrics ? logStats.pendingCount : filteredPendingCount);
 
-  const isAdminFullscreen = isDemoMode && currentMode === "admin";
-
   return (
-    <div className={`app${isAdminFullscreen ? " app-fullscreen" : ""}`} ref={appRef}>
-      <div className={`dashboard-card${isAdminFullscreen ? " dashboard-card-fullscreen" : ""}`}>
+    <div className="app" ref={appRef}>
+      <div className="dashboard-card">
         <div className="header-row">
           <div className="logo-with-title">
             <img
@@ -1112,348 +1150,8 @@ function MerchantDashboard({
           )}
         </div>
 
-        {currentMode === "admin" ? (
           <>
-            {/* Admin Mode Header + Tabs */}
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: "12px",
-                marginTop: "24px",
-                marginBottom: "16px",
-                flexWrap: "wrap",
-              }}
-            >
-              <button
-                className="ghost-button"
-                onClick={() => {
-                  setCurrentMode("dashboard");
-                  setPinVerified(false);
-                }}
-                style={{ fontSize: "0.85rem", padding: "6px 12px" }}
-              >
-                ← Back
-              </button>
-              <h2 className="merchant-name" style={{ margin: 0, fontSize: "1.1rem" }}>Admin Mode</h2>
-              <button
-                type="button"
-                className="ghost-button"
-                onClick={openChangeAdminPinFlow}
-                style={{ fontSize: "0.85rem", padding: "6px 12px", marginLeft: "auto" }}
-              >
-                Change PIN
-              </button>
-            </div>
-            <div className={`bank-card ${merchantBank.bank === "Not linked" ? "bank-card-unlinked" : ""}`} style={{ marginBottom: "20px" }}>
-              <div className="bank-card-content">
-                <p className="metric-label">Payout account</p>
-                {merchantBank.bank === "Not linked" ? (
-                  <p className="bank-unlinked-text">No bank account linked</p>
-                ) : (
-                  <p className="metric-value bank-account-value">
-                    {merchantBank.bank} {merchantBank.account ? `*${merchantBank.account}` : ""}
-                  </p>
-                )}
-              </div>
-              <button className="pay-button" onClick={handleLinkBankClick}>
-                {merchantBank.bank === "Not linked" ? "Link bank" : "Update bank"}
-              </button>
-            </div>
-
-            <div className="admin-tabs" style={{ marginBottom: "24px" }}>
-              <button
-                className={`admin-tab-button ${adminTab === "employees" ? "active" : ""}`}
-                onClick={() => setAdminTab("employees")}
-              >
-                Pay Team
-              </button>
-              <button
-                className={`admin-tab-button ${adminTab === "accounting" ? "active" : ""}`}
-                onClick={() => setAdminTab("accounting")}
-              >
-                Check Books
-              </button>
-              <button
-                className={`admin-tab-button ${adminTab === "whatsapp" ? "active" : ""}`}
-                onClick={() => setAdminTab("whatsapp")}
-              >
-                WhatsApp
-              </button>
-              {isDemoMode && (
-                <button
-                  className={`admin-tab-button ${adminTab === "tax" ? "active" : ""}`}
-                  onClick={() => setAdminTab("tax")}
-                >
-                  Tax Report
-                </button>
-              )}
-            </div>
-
-            {/* Tab Content */}
-            {adminTab === "employees" ? (
-              <EmployeesView
-                employees={employees}
-                employeesLoading={employeesLoading}
-                employeesError={employeesError}
-                onAddEmployee={onAddEmployee}
-                onDeleteEmployee={onDeleteEmployee}
-                currencySymbol={currencySymbol}
-              />
-            ) : adminTab === "accounting" ? (
-              <AccountingView
-                merchantPayments={isDemoMode ? DEMO_ACCOUNTING_PAYMENTS : merchantPayments}
-                currencySymbol={currencySymbol}
-                loading={isDemoMode ? false : paymentsLoading}
-              />
-            ) : adminTab === "tax" ? (
-              /* Tax Report (demo only) */
-              <div style={{ marginTop: "16px" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "20px" }}>
-                  <h3 style={{ margin: 0, fontSize: "1rem", color: "var(--text)" }}>SARS Provisional Tax</h3>
-                  <span style={{ fontSize: "0.72rem", fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", background: "#dcfce7", color: "#15803d", borderRadius: "20px", padding: "3px 10px" }}>
-                    Ready to submit
-                  </span>
-                </div>
-                <p style={{ margin: "0 0 20px", fontSize: "0.82rem", color: "var(--muted)" }}>
-                  Period: 1 Feb 2026 – 31 Jul 2026 &nbsp;·&nbsp; Generated by Shesha AI
-                </p>
-
-                {/* Income summary */}
-                <div style={{ background: "var(--bg)", border: "1px solid var(--border)", borderRadius: "12px", padding: "20px", marginBottom: "16px" }}>
-                  <p style={{ margin: "0 0 16px", fontWeight: 600, fontSize: "0.9rem" }}>Income summary</p>
-                  {[
-                    { label: "Total turnover",           amount: "R145,230.00", bold: false },
-                    { label: "Materials & parts",         amount: "− R28,400.00", muted: true },
-                    { label: "Fuel & vehicle",            amount: "− R12,600.00", muted: true },
-                    { label: "Tools & equipment",         amount: "−  R4,200.00", muted: true },
-                  ].map(({ label, amount, muted, bold }) => (
-                    <div key={label} style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: "1px solid var(--border)", fontSize: "0.875rem" }}>
-                      <span style={{ color: muted ? "var(--muted)" : "var(--text)" }}>{label}</span>
-                      <span style={{ fontWeight: bold ? 700 : 500, color: muted ? "var(--muted)" : "var(--text)" }}>{amount}</span>
-                    </div>
-                  ))}
-                  <div style={{ display: "flex", justifyContent: "space-between", padding: "12px 0 0", fontSize: "0.9rem" }}>
-                    <span style={{ fontWeight: 700 }}>Net income</span>
-                    <span style={{ fontWeight: 700 }}>R100,030.00</span>
-                  </div>
-                </div>
-
-                {/* Tax estimate */}
-                <div style={{ background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: "12px", padding: "20px", marginBottom: "20px" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <div>
-                      <p style={{ margin: 0, fontSize: "0.82rem", color: "#1e40af" }}>Estimated provisional tax</p>
-                      <p style={{ margin: "4px 0 0", fontSize: "1.5rem", fontWeight: 700, color: "#1e3a8a" }}>R28,008.40</p>
-                    </div>
-                    <div style={{ textAlign: "right" }}>
-                      <p style={{ margin: 0, fontSize: "0.75rem", color: "#1e40af" }}>Due date</p>
-                      <p style={{ margin: "4px 0 0", fontSize: "0.9rem", fontWeight: 600, color: "#1e3a8a" }}>31 Aug 2026</p>
-                    </div>
-                  </div>
-                </div>
-
-                <div style={{ display: "flex", gap: "12px" }}>
-                  <button className="ghost-button" style={{ flex: 1 }} onClick={() => {}}>Download PDF</button>
-                  <button className="pay-button" style={{ flex: 1 }} onClick={() => {}}>Submit to eFiling</button>
-                </div>
-              </div>
-            ) : (
-              /* WhatsApp Business Settings */
-              <div style={{ marginTop: "16px" }}>
-                <div className="bank-card" style={{ marginBottom: "20px" }}>
-                  <div className="bank-card-content">
-                    <p className="metric-label">WhatsApp Business</p>
-                    {whatsappStatus.connected ? (
-                      <>
-                        <p className="metric-value bank-account-value" style={{ color: "#22c55e" }}>
-                          Connected
-                        </p>
-                        {whatsappStatus.phoneNumberId && (
-                          <p className="payment-subtext" style={{ marginTop: "4px" }}>
-                            Phone ID: {whatsappStatus.phoneNumberId}
-                          </p>
-                        )}
-                        {whatsappStatus.connectedAt && (
-                          <p className="payment-subtext" style={{ marginTop: "2px" }}>
-                            Connected: {new Date(whatsappStatus.connectedAt).toLocaleString()}
-                          </p>
-                        )}
-                      </>
-                    ) : (
-                      <p className="bank-unlinked-text">Not connected</p>
-                    )}
-                  </div>
-                  {whatsappStatus.connected ? (
-                    <button
-                      className="ghost-button"
-                      onClick={handleDisconnectWhatsApp}
-                      style={{ color: "#ef4444" }}
-                    >
-                      Disconnect
-                    </button>
-                  ) : (
-                    <button
-                      className="pay-button"
-                      onClick={handleConnectWhatsApp}
-                      disabled={whatsappConnecting}
-                    >
-                      {whatsappConnecting ? "Connecting..." : "Connect WhatsApp"}
-                    </button>
-                  )}
-                </div>
-
-                <div style={{
-                  background: "var(--card-bg, #f8fafc)",
-                  border: "1px solid var(--border)",
-                  borderRadius: "12px",
-                  padding: "20px",
-                }}>
-                  <h3 style={{ margin: "0 0 12px", fontSize: "0.95rem", color: "var(--text)" }}>
-                    How it works
-                  </h3>
-                  <div style={{ fontSize: "0.85rem", color: "var(--muted)", lineHeight: 1.6 }}>
-                    {whatsappStatus.connected ? (
-                      <ul style={{ margin: 0, paddingLeft: "20px" }}>
-                        <li>Payment reminders are sent <strong>automatically</strong> via WhatsApp when invoices are overdue (after 3 days)</li>
-                        <li>Up to 3 reminders are sent, spaced 24 hours apart</li>
-                        <li>You can also manually send reminders from the Order History</li>
-                      </ul>
-                    ) : (
-                      <ul style={{ margin: 0, paddingLeft: "20px" }}>
-                        <li>Connect your WhatsApp Business account to enable <strong>automated</strong> payment reminders</li>
-                        <li>Without connection, reminders appear as alerts on your dashboard and you can send them manually via WhatsApp</li>
-                        <li>Requires a Meta Business account with WhatsApp Business Platform access</li>
-                      </ul>
-                    )}
-                  </div>
-                </div>
-
-                {/* Overdue invoices summary */}
-                {Object.values(invoicesMap).filter(
-                  (inv, idx, self) => self.findIndex((i) => i.id === inv.id) === idx && (inv.status === "OVERDUE" || inv.status === "UNPAID")
-                ).length > 0 && (
-                  <div style={{
-                    marginTop: "20px",
-                    background: "#fef2f2",
-                    border: "1px solid #fecaca",
-                    borderRadius: "12px",
-                    padding: "16px 20px",
-                  }}>
-                    <p style={{ margin: "0 0 8px", fontWeight: 600, fontSize: "0.9rem", color: "#991b1b" }}>
-                      Pending Reminders
-                    </p>
-                    {Object.values(invoicesMap)
-                      .filter((inv, idx, self) => self.findIndex((i) => i.id === inv.id) === idx && inv.status === "OVERDUE")
-                      .map((inv) => (
-                        <div key={inv.id} style={{
-                          display: "flex",
-                          justifyContent: "space-between",
-                          alignItems: "center",
-                          padding: "8px 0",
-                          borderBottom: "1px solid #fecaca",
-                        }}>
-                          <div>
-                            <p style={{ margin: 0, fontSize: "0.85rem", fontWeight: 500 }}>
-                              {inv.customerPhone} &mdash; {currencySymbol}{inv.amount.toFixed(2)}
-                            </p>
-                            <p style={{ margin: "2px 0 0", fontSize: "0.75rem", color: "#991b1b" }}>
-                              {inv.remindersSent}/{inv.maxReminders} reminders sent
-                            </p>
-                          </div>
-                        </div>
-                      ))}
-                  </div>
-                )}
-
-                {/* Demo: mock messages + jobs */}
-                {isDemoMode && (
-                  <>
-                    <div style={{ marginTop: "24px" }}>
-                      <p style={{ margin: "0 0 12px", fontWeight: 600, fontSize: "0.9rem" }}>Messages sent today</p>
-                      {[
-                        { time: "07:52", to: "BuildRight Construction", msg: "Hi, your invoice of R8,500 (Pipe relining) is overdue. Please pay: shesha.pay/p/ORD-1837 🔧", type: "reminder" },
-                        { time: "08:10", to: "Khumalo Residence",       msg: "Hi, your invoice of R1,850 (Blocked drain) is due in 2 days. Pay here: shesha.pay/p/ORD-1838", type: "reminder" },
-                        { time: "08:45", to: "Mr Sithole",              msg: "Hi Sithole, confirming your geyser installation tomorrow at 9am. Reply YES to confirm. 🚰",        type: "job" },
-                        { time: "09:03", to: "Acorn Properties",        msg: "Hi, invoice #ORD-1841 for R3,500 has been settled. Thank you for your payment! ✅",                  type: "confirmed" },
-                        { time: "09:30", to: "Mrs Nkosi",               msg: "Hi Mrs Nkosi, job dispatched: Leaking tap repair today between 2–4pm. Craig is on his way. 📍",    type: "job" },
-                      ].map(({ time, to, msg, type }) => (
-                        <div key={time + to} style={{
-                          borderBottom: "1px solid var(--border)",
-                          padding: "12px 0",
-                          display: "flex",
-                          gap: "12px",
-                          alignItems: "flex-start",
-                        }}>
-                          <span style={{
-                            marginTop: "2px",
-                            fontSize: "0.75rem",
-                            color: "var(--muted)",
-                            minWidth: "36px",
-                          }}>{time}</span>
-                          <div style={{ flex: 1 }}>
-                            <p style={{ margin: "0 0 3px", fontSize: "0.82rem", fontWeight: 600, color: "var(--text)" }}>{to}</p>
-                            <p style={{ margin: 0, fontSize: "0.80rem", color: "var(--muted)", lineHeight: 1.5 }}>{msg}</p>
-                          </div>
-                          <span style={{
-                            fontSize: "0.68rem",
-                            fontWeight: 700,
-                            textTransform: "uppercase",
-                            letterSpacing: "0.05em",
-                            borderRadius: "20px",
-                            padding: "2px 8px",
-                            whiteSpace: "nowrap",
-                            background: type === "confirmed" ? "#dcfce7" : type === "job" ? "#eff6ff" : "#fef9c3",
-                            color:      type === "confirmed" ? "#15803d" : type === "job" ? "#1e40af" : "#854d0e",
-                          }}>
-                            {type === "confirmed" ? "paid" : type === "job" ? "dispatched" : "reminder"}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-
-                    <div style={{ marginTop: "24px" }}>
-                      <p style={{ margin: "0 0 12px", fontWeight: 600, fontSize: "0.9rem" }}>Jobs in queue</p>
-                      {[
-                        { client: "Sunrise Villas",    job: "Bathroom fitting",    slot: "Tomorrow, 10am",   status: "confirmed" },
-                        { client: "Mr Dube",           job: "Hot water cylinder",  slot: "Thu 9 May, 8am",   status: "pending" },
-                        { client: "Cape Road Properties", job: "Drain cleaning",   slot: "Thu 9 May, 2pm",   status: "pending" },
-                        { client: "Sandton Estates",   job: "Monthly maintenance", slot: "Fri 10 May, 9am",  status: "confirmed" },
-                      ].map(({ client, job, slot, status }) => (
-                        <div key={client} style={{
-                          display: "flex",
-                          justifyContent: "space-between",
-                          alignItems: "center",
-                          padding: "10px 0",
-                          borderBottom: "1px solid var(--border)",
-                        }}>
-                          <div>
-                            <p style={{ margin: 0, fontSize: "0.85rem", fontWeight: 600 }}>{client}</p>
-                            <p style={{ margin: "2px 0 0", fontSize: "0.78rem", color: "var(--muted)" }}>{job} · {slot}</p>
-                          </div>
-                          <span style={{
-                            fontSize: "0.68rem",
-                            fontWeight: 700,
-                            textTransform: "uppercase",
-                            letterSpacing: "0.05em",
-                            borderRadius: "20px",
-                            padding: "2px 8px",
-                            background: status === "confirmed" ? "#dcfce7" : "#fef9c3",
-                            color:      status === "confirmed" ? "#15803d" : "#854d0e",
-                          }}>
-                            {status}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  </>
-                )}
-              </div>
-            )}
-          </>
-        ) : (
-          <>
-            {/* Main Mode Tabs (visible for dashboard and checkout) */}
+            {/* Main Mode Tabs */}
             <div className="admin-tabs" style={{ marginTop: "24px", marginBottom: "24px" }}>
               <button
                 className={`admin-tab-button ${currentMode === "dashboard" ? "active" : ""}`}
@@ -1465,7 +1163,7 @@ function MerchantDashboard({
                 className={`admin-tab-button ${currentMode === "checkout" ? "active" : ""}`}
                 onClick={() => setCurrentMode("checkout")}
               >
-                Invoices
+                Invoice History
               </button>
               <button
                 className={`admin-tab-button ${currentMode === "invoices" ? "active" : ""}`}
@@ -1474,15 +1172,31 @@ function MerchantDashboard({
                 Invoice Agent
               </button>
               <button
-                className="admin-tab-button"
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  if (isDemoMode) { setCurrentMode("admin"); } else { void openAdminPinFlow(); }
-                }}
+                className={`admin-tab-button ${currentMode === "payteam" ? "active" : ""}`}
+                onClick={() => setCurrentMode("payteam")}
               >
-                Admin Mode
+                Pay Team
               </button>
+              <button
+                className={`admin-tab-button ${currentMode === "checkbooks" ? "active" : ""}`}
+                onClick={() => setCurrentMode("checkbooks")}
+              >
+                Check Books
+              </button>
+              <button
+                className={`admin-tab-button ${currentMode === "whatsapp" ? "active" : ""}`}
+                onClick={() => setCurrentMode("whatsapp")}
+              >
+                WhatsApp
+              </button>
+              {isDemoMode && (
+                <button
+                  className={`admin-tab-button ${currentMode === "tax" ? "active" : ""}`}
+                  onClick={() => setCurrentMode("tax")}
+                >
+                  Tax Report
+                </button>
+              )}
             </div>
 
             {currentMode === "invoices" ? (
@@ -1491,9 +1205,9 @@ function MerchantDashboard({
               <>
                 {/* Dashboard Tab - Metrics and Payout Account */}
             {/* Time Period Selector */}
-            <div className="time-period-selector" style={{ 
-              display: "flex", 
-              gap: "8px", 
+            <div className="time-period-selector" style={{
+              display: "flex",
+              gap: "8px",
               marginBottom: "20px",
               flexWrap: "wrap"
             }}>
@@ -1568,9 +1282,218 @@ function MerchantDashboard({
               <ForecastPanel isDemoMode={isDemoMode} />
             </div>
               </>
+            ) : currentMode === "payteam" ? (
+              <>
+                <div className={`bank-card ${merchantBank.bank === "Not linked" ? "bank-card-unlinked" : ""}`} style={{ marginBottom: "20px" }}>
+                  <div className="bank-card-content">
+                    <p className="metric-label">Payout account</p>
+                    {merchantBank.bank === "Not linked" ? (
+                      <p className="bank-unlinked-text">No bank account linked</p>
+                    ) : (
+                      <p className="metric-value bank-account-value">
+                        {merchantBank.bank} {merchantBank.account ? `*${merchantBank.account}` : ""}
+                      </p>
+                    )}
+                  </div>
+                  <button className="pay-button" onClick={handleLinkBankClick}>
+                    {merchantBank.bank === "Not linked" ? "Link bank" : "Update bank"}
+                  </button>
+                </div>
+                <EmployeesView
+                  employees={employees}
+                  employeesLoading={employeesLoading}
+                  employeesError={employeesError}
+                  onAddEmployee={onAddEmployee}
+                  onDeleteEmployee={onDeleteEmployee}
+                  currencySymbol={currencySymbol}
+                />
+              </>
+            ) : currentMode === "checkbooks" ? (
+              <AccountingView
+                merchantPayments={isDemoMode ? DEMO_ACCOUNTING_PAYMENTS : merchantPayments}
+                currencySymbol={currencySymbol}
+                loading={isDemoMode ? false : paymentsLoading}
+              />
+            ) : currentMode === "tax" ? (
+              <div style={{ marginTop: "16px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "20px" }}>
+                  <h3 style={{ margin: 0, fontSize: "1rem", color: "var(--text)" }}>SARS Provisional Tax</h3>
+                  <span style={{ fontSize: "0.72rem", fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", background: "#dcfce7", color: "#15803d", borderRadius: "20px", padding: "3px 10px" }}>
+                    Ready to submit
+                  </span>
+                </div>
+                <p style={{ margin: "0 0 20px", fontSize: "0.82rem", color: "var(--muted)" }}>
+                  Period: 1 Feb 2026 – 31 Jul 2026 &nbsp;·&nbsp; Generated by Shesha AI
+                </p>
+                <div style={{ background: "var(--bg)", border: "1px solid var(--border)", borderRadius: "12px", padding: "20px", marginBottom: "16px" }}>
+                  <p style={{ margin: "0 0 16px", fontWeight: 600, fontSize: "0.9rem" }}>Income summary</p>
+                  {[
+                    { label: "Total turnover",    amount: "R145,230.00", bold: false },
+                    { label: "Materials & parts",  amount: "− R28,400.00", muted: true },
+                    { label: "Fuel & vehicle",     amount: "− R12,600.00", muted: true },
+                    { label: "Tools & equipment",  amount: "−  R4,200.00", muted: true },
+                  ].map(({ label, amount, muted, bold }) => (
+                    <div key={label} style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: "1px solid var(--border)", fontSize: "0.875rem" }}>
+                      <span style={{ color: muted ? "var(--muted)" : "var(--text)" }}>{label}</span>
+                      <span style={{ fontWeight: bold ? 700 : 500, color: muted ? "var(--muted)" : "var(--text)" }}>{amount}</span>
+                    </div>
+                  ))}
+                  <div style={{ display: "flex", justifyContent: "space-between", padding: "12px 0 0", fontSize: "0.9rem" }}>
+                    <span style={{ fontWeight: 700 }}>Net income</span>
+                    <span style={{ fontWeight: 700 }}>R100,030.00</span>
+                  </div>
+                </div>
+                <div style={{ background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: "12px", padding: "20px", marginBottom: "20px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div>
+                      <p style={{ margin: 0, fontSize: "0.82rem", color: "#1e40af" }}>Estimated provisional tax</p>
+                      <p style={{ margin: "4px 0 0", fontSize: "1.5rem", fontWeight: 700, color: "#1e3a8a" }}>R28,008.40</p>
+                    </div>
+                    <div style={{ textAlign: "right" }}>
+                      <p style={{ margin: 0, fontSize: "0.75rem", color: "#1e40af" }}>Due date</p>
+                      <p style={{ margin: "4px 0 0", fontSize: "0.9rem", fontWeight: 600, color: "#1e3a8a" }}>31 Aug 2026</p>
+                    </div>
+                  </div>
+                </div>
+                <div style={{ display: "flex", gap: "12px" }}>
+                  <button className="ghost-button" style={{ flex: 1 }} onClick={() => {}}>Download PDF</button>
+                  <button className="pay-button" style={{ flex: 1 }} onClick={() => {}}>Submit to eFiling</button>
+                </div>
+              </div>
+            ) : currentMode === "whatsapp" ? (
+              <div style={{ marginTop: "16px" }}>
+                <div className="bank-card" style={{ marginBottom: "20px" }}>
+                  <div className="bank-card-content">
+                    <p className="metric-label">WhatsApp Business</p>
+                    {whatsappStatus.connected ? (
+                      <>
+                        <p className="metric-value bank-account-value" style={{ color: "#22c55e" }}>
+                          Connected
+                        </p>
+                        {whatsappStatus.phoneNumberId && (
+                          <p className="payment-subtext" style={{ marginTop: "4px" }}>
+                            Phone ID: {whatsappStatus.phoneNumberId}
+                          </p>
+                        )}
+                        {whatsappStatus.connectedAt && (
+                          <p className="payment-subtext" style={{ marginTop: "2px" }}>
+                            Connected: {new Date(whatsappStatus.connectedAt).toLocaleString()}
+                          </p>
+                        )}
+                      </>
+                    ) : (
+                      <p className="bank-unlinked-text">Not connected</p>
+                    )}
+                  </div>
+                  {whatsappStatus.connected ? (
+                    <button
+                      className="ghost-button"
+                      onClick={handleDisconnectWhatsApp}
+                      style={{ color: "#ef4444" }}
+                    >
+                      Disconnect
+                    </button>
+                  ) : (
+                    <button
+                      className="pay-button"
+                      onClick={handleConnectWhatsApp}
+                      disabled={whatsappConnecting}
+                    >
+                      {whatsappConnecting ? "Connecting..." : "Connect WhatsApp"}
+                    </button>
+                  )}
+                </div>
+                <div style={{ background: "var(--card-bg, #f8fafc)", border: "1px solid var(--border)", borderRadius: "12px", padding: "20px" }}>
+                  <h3 style={{ margin: "0 0 12px", fontSize: "0.95rem", color: "var(--text)" }}>
+                    How it works
+                  </h3>
+                  <div style={{ fontSize: "0.85rem", color: "var(--muted)", lineHeight: 1.6 }}>
+                    {whatsappStatus.connected ? (
+                      <ul style={{ margin: 0, paddingLeft: "20px" }}>
+                        <li>Payment reminders are sent <strong>automatically</strong> via WhatsApp when invoices are overdue (after 3 days)</li>
+                        <li>Up to 3 reminders are sent, spaced 24 hours apart</li>
+                        <li>You can also manually send reminders from the Order History</li>
+                      </ul>
+                    ) : (
+                      <ul style={{ margin: 0, paddingLeft: "20px" }}>
+                        <li>Connect your WhatsApp Business account to enable <strong>automated</strong> payment reminders</li>
+                        <li>Without connection, reminders appear as alerts on your dashboard and you can send them manually via WhatsApp</li>
+                        <li>Requires a Meta Business account with WhatsApp Business Platform access</li>
+                      </ul>
+                    )}
+                  </div>
+                </div>
+                {Object.values(invoicesMap).filter(
+                  (inv, idx, self) => self.findIndex((i) => i.id === inv.id) === idx && (inv.status === "OVERDUE" || inv.status === "UNPAID")
+                ).length > 0 && (
+                  <div style={{ marginTop: "20px", background: "#fef2f2", border: "1px solid #fecaca", borderRadius: "12px", padding: "16px 20px" }}>
+                    <p style={{ margin: "0 0 8px", fontWeight: 600, fontSize: "0.9rem", color: "#991b1b" }}>
+                      Pending Reminders
+                    </p>
+                    {Object.values(invoicesMap)
+                      .filter((inv, idx, self) => self.findIndex((i) => i.id === inv.id) === idx && inv.status === "OVERDUE")
+                      .map((inv) => (
+                        <div key={inv.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderBottom: "1px solid #fecaca" }}>
+                          <div>
+                            <p style={{ margin: 0, fontSize: "0.85rem", fontWeight: 500 }}>
+                              {inv.customerPhone} &mdash; {currencySymbol}{inv.amount.toFixed(2)}
+                            </p>
+                            <p style={{ margin: "2px 0 0", fontSize: "0.75rem", color: "#991b1b" }}>
+                              {inv.remindersSent}/{inv.maxReminders} reminders sent
+                            </p>
+                          </div>
+                        </div>
+                      ))}
+                  </div>
+                )}
+                {isDemoMode && (
+                  <>
+                    <div style={{ marginTop: "24px" }}>
+                      <p style={{ margin: "0 0 12px", fontWeight: 600, fontSize: "0.9rem" }}>Messages sent today</p>
+                      {[
+                        { time: "07:52", to: "BuildRight Construction", msg: "Hi, your invoice of R8,500 (Pipe relining) is overdue. Please pay: shesha.pay/p/ORD-1837 🔧", type: "reminder" },
+                        { time: "08:10", to: "Khumalo Residence",       msg: "Hi, your invoice of R1,850 (Blocked drain) is due in 2 days. Pay here: shesha.pay/p/ORD-1838", type: "reminder" },
+                        { time: "08:45", to: "Mr Sithole",              msg: "Hi Sithole, confirming your geyser installation tomorrow at 9am. Reply YES to confirm. 🚰",        type: "job" },
+                        { time: "09:03", to: "Acorn Properties",        msg: "Hi, invoice #ORD-1841 for R3,500 has been settled. Thank you for your payment! ✅",                  type: "confirmed" },
+                        { time: "09:30", to: "Mrs Nkosi",               msg: "Hi Mrs Nkosi, job dispatched: Leaking tap repair today between 2–4pm. Craig is on his way. 📍",    type: "job" },
+                      ].map(({ time, to, msg, type }) => (
+                        <div key={time + to} style={{ borderBottom: "1px solid var(--border)", padding: "12px 0", display: "flex", gap: "12px", alignItems: "flex-start" }}>
+                          <span style={{ marginTop: "2px", fontSize: "0.75rem", color: "var(--muted)", minWidth: "36px" }}>{time}</span>
+                          <div style={{ flex: 1 }}>
+                            <p style={{ margin: "0 0 3px", fontSize: "0.82rem", fontWeight: 600, color: "var(--text)" }}>{to}</p>
+                            <p style={{ margin: 0, fontSize: "0.80rem", color: "var(--muted)", lineHeight: 1.5 }}>{msg}</p>
+                          </div>
+                          <span style={{ fontSize: "0.68rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", borderRadius: "20px", padding: "2px 8px", whiteSpace: "nowrap", background: type === "confirmed" ? "#dcfce7" : type === "job" ? "#eff6ff" : "#fef9c3", color: type === "confirmed" ? "#15803d" : type === "job" ? "#1e40af" : "#854d0e" }}>
+                            {type === "confirmed" ? "paid" : type === "job" ? "dispatched" : "reminder"}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                    <div style={{ marginTop: "24px" }}>
+                      <p style={{ margin: "0 0 12px", fontWeight: 600, fontSize: "0.9rem" }}>Jobs in queue</p>
+                      {[
+                        { client: "Sunrise Villas",       job: "Bathroom fitting",    slot: "Tomorrow, 10am",  status: "confirmed" },
+                        { client: "Mr Dube",              job: "Hot water cylinder",  slot: "Thu 9 May, 8am",  status: "pending" },
+                        { client: "Cape Road Properties", job: "Drain cleaning",      slot: "Thu 9 May, 2pm",  status: "pending" },
+                        { client: "Sandton Estates",      job: "Monthly maintenance", slot: "Fri 10 May, 9am", status: "confirmed" },
+                      ].map(({ client, job, slot, status }) => (
+                        <div key={client} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: "1px solid var(--border)" }}>
+                          <div>
+                            <p style={{ margin: 0, fontSize: "0.85rem", fontWeight: 600 }}>{client}</p>
+                            <p style={{ margin: "2px 0 0", fontSize: "0.78rem", color: "var(--muted)" }}>{job} · {slot}</p>
+                          </div>
+                          <span style={{ fontSize: "0.68rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", borderRadius: "20px", padding: "2px 8px", background: status === "confirmed" ? "#dcfce7" : "#fef9c3", color: status === "confirmed" ? "#15803d" : "#854d0e" }}>
+                            {status}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
             ) : (
               <>
-                {/* Checkout Mode - Payment Operations */}
+                {/* Invoice History */}
             <div className="checkout-section-container">
               <div className="receipt-dashboard">
                 <div className="receipt-dashboard-left">
@@ -1637,7 +1560,6 @@ function MerchantDashboard({
               </>
             )}
           </>
-        )}
 
         {/* QR Modal - rendered via portal */}
 
@@ -1691,6 +1613,28 @@ function MerchantDashboard({
                   </small>
                 </div>
 
+                <div style={{ marginBottom: "20px" }}>
+                  <p className="metric-label" style={{ marginBottom: "8px", fontWeight: 600, fontSize: "0.83rem" }}>
+                    Customer <span style={{ fontWeight: 400, color: "var(--muted)" }}>(optional — saves to invoice history)</span>
+                  </p>
+                  <input
+                    type="text"
+                    className="bank-auth-select"
+                    placeholder="Customer name"
+                    value={createInvoiceCustomerName}
+                    onChange={(e) => setCreateInvoiceCustomerName(e.target.value)}
+                    style={{ marginBottom: "8px", width: "100%" }}
+                  />
+                  <input
+                    type="email"
+                    className="bank-auth-select"
+                    placeholder="Customer email"
+                    value={createInvoiceCustomerEmail}
+                    onChange={(e) => setCreateInvoiceCustomerEmail(e.target.value)}
+                    style={{ width: "100%" }}
+                  />
+                </div>
+
                 <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
                   <button
                     className="bank-auth-button"
@@ -1712,6 +1656,8 @@ function MerchantDashboard({
                       setShowCreateInvoiceOptions(false);
                       setPendingPayment(null);
                       setCreateInvoiceDescriptionInput("");
+                      setCreateInvoiceCustomerName("");
+                      setCreateInvoiceCustomerEmail("");
                       if (onAddPayment) {
                         onAddPayment(paymentToAdd);
                       }
