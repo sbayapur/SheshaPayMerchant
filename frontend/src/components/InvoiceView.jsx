@@ -12,6 +12,8 @@ function getInvoiceIdFromPath() {
 export default function InvoiceView() {
   const [invoice, setInvoice] = useState(null);
   const [error, setError] = useState(null);
+  const [claiming, setClaiming] = useState(false);
+  const [claimed, setClaimed] = useState(false);
 
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: "instant" });
@@ -22,6 +24,22 @@ export default function InvoiceView() {
       .then(setInvoice)
       .catch(() => setError("Invoice not found or no longer available."));
   }, []);
+
+  async function handleClaimPaid() {
+    setClaiming(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/agent/invoices/${invoice.id}/claim-paid`, { method: "PATCH" });
+      if (!res.ok) throw new Error("Failed");
+      setClaimed(true);
+    } catch {
+      // silently ignore — button stays enabled so they can retry
+    } finally {
+      setClaiming(false);
+    }
+  }
+
+  const alreadyClaimed = invoice?.status === "customer_claimed_paid";
+  const alreadyPaid = invoice?.status === "paid";
 
   if (error) {
     return (
@@ -138,6 +156,35 @@ export default function InvoiceView() {
           <p className="snapscan-amount">{formatZAR(invoice.total)}</p>
           <p className="snapscan-ref">Ref: {invoice.id}</p>
         </div>
+      </div>
+
+      <div className="pay-section">
+        {alreadyPaid ? (
+          <div className="snapscan-card" style={{ background: "var(--success-bg, #f0fdf4)" }}>
+            <p style={{ margin: 0, fontWeight: 600, color: "var(--green)", textAlign: "center" }}>Payment confirmed — thank you!</p>
+          </div>
+        ) : claimed || alreadyClaimed ? (
+          <div className="snapscan-card">
+            <p style={{ margin: "0 0 4px", fontWeight: 600, color: "var(--navy)", textAlign: "center" }}>Payment submitted</p>
+            <p style={{ margin: 0, fontSize: 13, color: "var(--muted)", textAlign: "center" }}>Waiting for the merchant to verify your payment.</p>
+          </div>
+        ) : (
+          <button
+            onClick={handleClaimPaid}
+            disabled={claiming}
+            className="pay-button"
+            style={{ opacity: claiming ? 0.6 : 1 }}
+          >
+            <span className="pay-button-content">
+              <span className="pay-icon">✓</span>
+              <div>
+                <span className="pay-label">{claiming ? "Submitting…" : "I've paid"}</span>
+                <span className="pay-amount">Notify the merchant</span>
+              </div>
+            </span>
+            <span className="pay-arrow">→</span>
+          </button>
+        )}
       </div>
 
       <div className="security-row">

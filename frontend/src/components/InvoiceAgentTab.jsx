@@ -179,14 +179,23 @@ function statusBadge(status, dueDate) {
   const isOverdue = status === "sent" && new Date(dueDate) < new Date();
   const resolved = isOverdue ? "overdue" : status;
   const styles = {
-    sent:    { background: "#eff6ff", color: "#1d4ed8" },
-    overdue: { background: "#fef2f2", color: "#dc2626" },
-    paid:    { background: "#f0fdf4", color: "#166534" },
+    sent:                  { background: "#eff6ff", color: "#1d4ed8" },
+    draft:                 { background: "#f3f4f6", color: "#374151" },
+    overdue:               { background: "#fef2f2", color: "#dc2626" },
+    customer_claimed_paid: { background: "#fefce8", color: "#92400e" },
+    paid:                  { background: "#f0fdf4", color: "#166534" },
+  };
+  const labels = {
+    customer_claimed_paid: "Awaiting verification",
+    paid: "Paid",
+    sent: "Sent",
+    draft: "Draft",
+    overdue: "Overdue",
   };
   const s = styles[resolved] || styles.sent;
   return (
-    <span style={{ ...s, fontSize: 10, fontWeight: 600, padding: "2px 7px", borderRadius: 99, textTransform: "capitalize" }}>
-      {resolved}
+    <span style={{ ...s, fontSize: 10, fontWeight: 600, padding: "2px 7px", borderRadius: 99 }}>
+      {labels[resolved] || resolved}
     </span>
   );
 }
@@ -194,6 +203,7 @@ function statusBadge(status, dueDate) {
 function SentInvoicesList({ refreshKey }) {
   const [invoices, setInvoices] = useState(null);
   const [error, setError] = useState(null);
+  const [verifying, setVerifying] = useState(null); // invoice id being verified
 
   useEffect(() => {
     fetch(`${INVOICE_API}/api/agent/invoices`)
@@ -201,6 +211,21 @@ function SentInvoicesList({ refreshKey }) {
       .then(setInvoices)
       .catch(() => setError("Could not load invoices."));
   }, [refreshKey]);
+
+  async function handleVerify(e, id) {
+    e.preventDefault();
+    e.stopPropagation();
+    setVerifying(id);
+    try {
+      const res = await fetch(`${INVOICE_API}/api/agent/invoices/${id}/verify-paid`, { method: "PATCH" });
+      if (!res.ok) throw new Error("Failed");
+      setInvoices((prev) => prev.map((inv) => inv.id === id ? { ...inv, status: "paid" } : inv));
+    } catch {
+      // silently ignore
+    } finally {
+      setVerifying(null);
+    }
+  }
 
   const frontendBase = (import.meta.env.VITE_API_BASE || "http://localhost:4000")
     .replace(/\/+$/, "")
@@ -235,9 +260,23 @@ function SentInvoicesList({ refreshKey }) {
             </p>
             <p style={{ margin: "2px 0 0", fontSize: 11, color: muted }}>{inv.customer_email} · Due {formatDateZA(inv.due_date)}</p>
           </div>
-          <div style={{ textAlign: "right", flexShrink: 0 }}>
-            <p style={{ margin: "0 0 3px", fontSize: 13, fontWeight: 700, color: accent }}>{formatZAR(inv.total)}</p>
+          <div style={{ textAlign: "right", flexShrink: 0, display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 5 }}>
+            <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: accent }}>{formatZAR(inv.total)}</p>
             {statusBadge(inv.status, inv.due_date)}
+            {inv.status === "customer_claimed_paid" && (
+              <button
+                onClick={(e) => handleVerify(e, inv.id)}
+                disabled={verifying === inv.id}
+                style={{
+                  marginTop: 2, padding: "4px 10px", borderRadius: 6, border: "none",
+                  background: "var(--green)", color: "white", fontSize: 11, fontWeight: 600,
+                  cursor: verifying === inv.id ? "not-allowed" : "pointer",
+                  opacity: verifying === inv.id ? 0.6 : 1,
+                }}
+              >
+                {verifying === inv.id ? "Verifying…" : "Verify Payment"}
+              </button>
+            )}
           </div>
         </a>
       ))}

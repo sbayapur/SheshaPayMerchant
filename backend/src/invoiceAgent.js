@@ -137,6 +137,41 @@ router.post("/send-invoice", async (req, res) => {
   res.json({ id: invoice.id, invoiceUrl });
 });
 
+// PATCH /api/agent/invoices/:id/claim-paid  — public, customer self-reports payment
+router.patch("/invoices/:id/claim-paid", async (req, res) => {
+  if (!supabaseAdmin) return res.status(503).json({ error: "Database not configured" });
+
+  const { data, error } = await supabaseAdmin
+    .from("invoices")
+    .update({ status: "customer_claimed_paid" })
+    .eq("id", req.params.id)
+    .in("status", ["sent", "draft"])
+    .select("id, status")
+    .single();
+
+  if (error || !data) {
+    return res.status(404).json({ error: "Invoice not found or already processed" });
+  }
+  res.json({ id: data.id, status: data.status });
+});
+
+// PATCH /api/agent/invoices/:id/verify-paid  — merchant confirms payment
+router.patch("/invoices/:id/verify-paid", async (req, res) => {
+  if (!supabaseAdmin) return res.status(503).json({ error: "Database not configured" });
+
+  const { data, error } = await supabaseAdmin
+    .from("invoices")
+    .update({ status: "paid" })
+    .eq("id", req.params.id)
+    .select("id, status")
+    .single();
+
+  if (error || !data) {
+    return res.status(404).json({ error: "Invoice not found" });
+  }
+  res.json({ id: data.id, status: data.status });
+});
+
 // GET /api/agent/invoices  — list all invoices for this merchant
 router.get("/invoices", async (req, res) => {
   if (!supabaseAdmin) {
