@@ -923,13 +923,21 @@ function App() {
 
   const handleGenerateQr = async (payment) => {
     if (!payment) return;
+    // If the payment has an agent invoice, open the InvoiceView page (SnapScan + I've paid)
+    const invoiceId = payment.agentInvoiceId;
+    if (invoiceId || payment.invoiceUrl) {
+      const url = payment.invoiceUrl || `${window.location.origin}/invoice/${invoiceId}`;
+      window.open(url, "_blank", "noopener,noreferrer");
+      return;
+    }
+    // Fallback for old payment-intent-only orders: show QR popup
     try {
-      const linkUrl = payment.invoiceUrl || await createPaymentLink(payment);
-      if (!linkUrl) {
+      const paymentLink = await createPaymentLink(payment);
+      if (!paymentLink) {
         showToast("Failed to create invoice link", "error");
         return;
       }
-      const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(linkUrl)}`;
+      const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(paymentLink)}`;
       setQrPreview({ id: payment.id, url: qrUrl, open: true, payment });
     } catch (err) {
       console.error("Failed to create invoice link", err);
@@ -1182,7 +1190,7 @@ function App() {
     if (status === "AUTHORISED") return "Authorised";
     if (status === "PENDING") return "Pending";
     if (status === "FAILED") return "Failed";
-    if (status === "CUSTOMER_CLAIMED_PAID") return "Paid — verify";
+    if (status === "CUSTOMER_CLAIMED_PAID") return "Marked as Paid";
     if (status === "succeeded") return "Completed";
     if (status === "requires_action") return "Authorised";
     if (status === "requires_payment_method") return "Pending";
