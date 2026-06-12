@@ -446,7 +446,7 @@ export default function InvoiceAgentTab() {
         )}
 
         <div ref={bottomRef} />
-      </div>
+      </div>}
 
       {/* Input bar */}
       {view === "chat" && <div style={{ flexShrink: 0, background: card, borderTop: `1px solid ${border}`, padding: "12px 16px" }}>
