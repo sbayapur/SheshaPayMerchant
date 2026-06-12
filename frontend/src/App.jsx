@@ -33,7 +33,8 @@ function isInvoicePath() {
 }
 
 function initialTabFromPath() {
-  if (window.location.pathname === "/invoice-agent") return "invoices";
+  const path = window.location.pathname.replace(/\/+$/, "");
+  if (path === "/invoice-agent") return "invoices";
   return "dashboard";
 }
 
