@@ -108,6 +108,7 @@ function MerchantDashboard({
   onAddEmployee,
   onDeleteEmployee,
   onLogout,
+  onVerifyInvoice,
 }) {
   const API_BASE = getApiBase();
   const baseUrl = window.location.origin.includes("localhost")
@@ -1631,6 +1632,7 @@ function MerchantDashboard({
               invoicesMap={invoicesMap}
               whatsappConnected={whatsappStatus.connected}
               onSendReminder={handleSendReminder}
+              onVerifyInvoice={onVerifyInvoice}
             />
               </>
             )}

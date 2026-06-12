@@ -1750,6 +1750,12 @@ body {
   color: #991b1b;
 }
 
+.pill-pending-verify {
+  background: #fefce8;
+  color: #92400e;
+  font-weight: 600;
+}
+
 .pill-overdue {
   background: #fef2f2;
   color: #dc2626;

@@ -3,6 +3,8 @@ import { SESClient, SendEmailCommand } from "@aws-sdk/client-ses";
 import { Router } from "express";
 import { supabaseAdmin } from "./supabaseClient.js";
 import { buildInvoiceEmail } from "./invoiceEmail.js";
+import { getMerchantUserIdFromRequest } from "./merchantAuth.js";
+import { upsertMerchantOrderRecord } from "./orderHistoryStore.js";
 
 const router = Router();
 
@@ -109,6 +111,22 @@ router.post("/send-invoice", async (req, res) => {
     return res.status(500).json({ error: "Failed to save invoice" });
   }
 
+  const merchantUserId = await getMerchantUserIdFromRequest(req);
+  if (merchantUserId) {
+    void upsertMerchantOrderRecord({
+      merchantUserId,
+      customerId: null,
+      orderId: invoice.id,
+      invoiceId: invoice.id,
+      paymentIntentId: null,
+      amount: total,
+      currency: "ZAR",
+      items: line_items,
+      description: `Invoice for ${customer_name}`,
+      status: sendEmail ? "PENDING" : "DRAFT",
+    });
+  }
+
   const frontendUrl = (process.env.FRONTEND_BASE_URL || "http://localhost:5173").replace(/\/+$/, "");
   const invoiceUrl = `${frontendUrl}/invoice/${invoice.id}`;
 
@@ -152,6 +170,13 @@ router.patch("/invoices/:id/claim-paid", async (req, res) => {
   if (error || !data) {
     return res.status(404).json({ error: "Invoice not found or already processed" });
   }
+
+  // Mirror status into merchant_orders so the dashboard shows it
+  void supabaseAdmin
+    .from("merchant_orders")
+    .update({ status: "CUSTOMER_CLAIMED_PAID", updated_at: new Date().toISOString() })
+    .eq("invoice_id", req.params.id);
+
   res.json({ id: data.id, status: data.status });
 });
 
@@ -169,6 +194,13 @@ router.patch("/invoices/:id/verify-paid", async (req, res) => {
   if (error || !data) {
     return res.status(404).json({ error: "Invoice not found" });
   }
+
+  const now = new Date().toISOString();
+  void supabaseAdmin
+    .from("merchant_orders")
+    .update({ status: "PAID", paid_at: now, updated_at: now })
+    .eq("invoice_id", req.params.id);
+
   res.json({ id: data.id, status: data.status });
 });
 

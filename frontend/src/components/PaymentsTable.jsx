@@ -14,6 +14,7 @@ function PaymentsTable({
   invoicesMap = {},
   whatsappConnected = false,
   onSendReminder,
+  onVerifyInvoice,
 }) {
   const maskId = (id) => {
     if (!id) return "N/A";
@@ -164,6 +165,16 @@ function PaymentsTable({
                           disabled={!p.id || persistedOnly}
                         >
                           Send Invoice
+                        </button>
+                      )}
+                      {onVerifyInvoice && p.agentInvoiceId && p.status === "CUSTOMER_CLAIMED_PAID" && (
+                        <button
+                          className="ghost-button"
+                          type="button"
+                          onClick={() => onVerifyInvoice(p.agentInvoiceId)}
+                          style={{ color: "var(--green)", borderColor: "var(--green)", fontWeight: 600 }}
+                        >
+                          Verify Payment
                         </button>
                       )}
                       {onSendReminder && isNotSettled && (

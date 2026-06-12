@@ -137,12 +137,15 @@ function enrichPaymentsWithPersistedOrders(normalized, savedRows) {
           ? "SETTLED"
           : row.status === "CANCELLED"
             ? "CANCELLED"
-            : "PENDING",
+            : row.status === "CUSTOMER_CLAIMED_PAID"
+              ? "CUSTOMER_CLAIMED_PAID"
+              : "PENDING",
       createdAt: row.created_at,
       savedCustomerPhone: row.customers?.phone_normalized,
       savedCustomerName: row.customers?.display_name,
       savedMerchantOrderId: row.id,
       persistedOrderStatus: row.status,
+      agentInvoiceId: row.invoice_id || null,
       fromPersistedOnly: true,
     });
     coveredIds.add(String(syntheticId));
@@ -969,6 +972,20 @@ function App() {
     }
   };
 
+  const handleVerifyInvoice = async (agentInvoiceId) => {
+    try {
+      const res = await fetch(`${API_BASE}/api/agent/invoices/${agentInvoiceId}/verify-paid`, {
+        method: "PATCH",
+        headers: await getAuthHeaders(),
+      });
+      if (!res.ok) throw new Error("Failed to verify");
+      showToast("Payment verified and marked complete", "success");
+      handleClearPayments();
+    } catch {
+      showToast("Failed to verify payment", "error");
+    }
+  };
+
   const handleClearPayments = async () => {
     setPaymentsLoading(true);
     setPaymentsError("");
@@ -1160,12 +1177,11 @@ function App() {
   }, [view]);
 
   const statusLabel = (status) => {
-    // New banking-style statuses
     if (status === "SETTLED") return "Completed";
     if (status === "AUTHORISED") return "Authorised";
     if (status === "PENDING") return "Pending";
     if (status === "FAILED") return "Failed";
-    // Legacy statuses for backward compatibility
+    if (status === "CUSTOMER_CLAIMED_PAID") return "Awaiting verification";
     if (status === "succeeded") return "Completed";
     if (status === "requires_action") return "Authorised";
     if (status === "requires_payment_method") return "Pending";
@@ -1173,12 +1189,11 @@ function App() {
     return "Pending";
   };
   const statusClass = (status) => {
-    // New banking-style statuses
     if (status === "SETTLED") return "pill-succeeded";
     if (status === "AUTHORISED") return "pill-authorised";
     if (status === "PENDING") return "pill-processing";
     if (status === "FAILED") return "pill-failed";
-    // Legacy statuses
+    if (status === "CUSTOMER_CLAIMED_PAID") return "pill-pending-verify";
     if (status === "succeeded") return "pill-succeeded";
     return "pill-processing";
   };
@@ -1369,6 +1384,7 @@ function App() {
           onAddEmployee={handleAddEmployee}
           onDeleteEmployee={handleDeleteEmployee}
           onLogout={supabase ? handleLogout : undefined}
+          onVerifyInvoice={handleVerifyInvoice}
         />
         </TabletFrame>
         <Toast

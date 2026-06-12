@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { formatZAR, formatDateZA } from "../lib/format.js";
+import { getAuthHeaders } from "../lib/apiAuth.js";
 
 const INVOICE_API = (import.meta.env.VITE_API_BASE || "http://localhost:4000").replace(/\/$/, "");
 
@@ -23,9 +24,10 @@ function InvoicePreview({ invoice, onEdit, onSent }) {
     setBusy(true);
     setError(null);
     try {
+      const authHeaders = await getAuthHeaders({ "Content-Type": "application/json" });
       const res = await fetch(`${INVOICE_API}/api/agent/send-invoice`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders,
         body: JSON.stringify({ ...invoice, sendEmail }),
       });
       const data = await res.json();
@@ -54,7 +56,7 @@ function InvoicePreview({ invoice, onEdit, onSent }) {
           <p style={{ margin: 0, fontSize: 13, color: muted }}>
             {result.stored
               ? `Saved as a draft — no email sent to ${invoice.customer_email}.`
-              : `Email delivered to `}{result.stored ? null : <strong>{invoice.customer_email}</strong>}
+              : <>Email delivered to <strong>{invoice.customer_email}</strong></>}
           </p>
           {result.invoiceUrl && (
             <a href={result.invoiceUrl} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: accent, textDecoration: "none" }}>
@@ -173,122 +175,9 @@ function InvoicePreview({ invoice, onEdit, onSent }) {
   );
 }
 
-// ── Sent Invoices List ────────────────────────────────────────────────────────
-
-function statusBadge(status, dueDate) {
-  const isOverdue = status === "sent" && new Date(dueDate) < new Date();
-  const resolved = isOverdue ? "overdue" : status;
-  const styles = {
-    sent:                  { background: "#eff6ff", color: "#1d4ed8" },
-    draft:                 { background: "#f3f4f6", color: "#374151" },
-    overdue:               { background: "#fef2f2", color: "#dc2626" },
-    customer_claimed_paid: { background: "#fefce8", color: "#92400e" },
-    paid:                  { background: "#f0fdf4", color: "#166534" },
-  };
-  const labels = {
-    customer_claimed_paid: "Awaiting verification",
-    paid: "Paid",
-    sent: "Sent",
-    draft: "Draft",
-    overdue: "Overdue",
-  };
-  const s = styles[resolved] || styles.sent;
-  return (
-    <span style={{ ...s, fontSize: 10, fontWeight: 600, padding: "2px 7px", borderRadius: 99 }}>
-      {labels[resolved] || resolved}
-    </span>
-  );
-}
-
-function SentInvoicesList({ refreshKey }) {
-  const [invoices, setInvoices] = useState(null);
-  const [error, setError] = useState(null);
-  const [verifying, setVerifying] = useState(null); // invoice id being verified
-
-  useEffect(() => {
-    fetch(`${INVOICE_API}/api/agent/invoices`)
-      .then((r) => { if (!r.ok) throw new Error("Failed"); return r.json(); })
-      .then(setInvoices)
-      .catch(() => setError("Could not load invoices."));
-  }, [refreshKey]);
-
-  async function handleVerify(e, id) {
-    e.preventDefault();
-    e.stopPropagation();
-    setVerifying(id);
-    try {
-      const res = await fetch(`${INVOICE_API}/api/agent/invoices/${id}/verify-paid`, { method: "PATCH" });
-      if (!res.ok) throw new Error("Failed");
-      setInvoices((prev) => prev.map((inv) => inv.id === id ? { ...inv, status: "paid" } : inv));
-    } catch {
-      // silently ignore
-    } finally {
-      setVerifying(null);
-    }
-  }
-
-  const frontendBase = (import.meta.env.VITE_API_BASE || "http://localhost:4000")
-    .replace(/\/+$/, "")
-    .replace(/:\d+$/, ":5173")
-    .replace(/api\./, "");
-
-  if (error) return <p style={{ padding: 24, textAlign: "center", color: "var(--muted)", fontSize: 13 }}>{error}</p>;
-  if (!invoices) return <p style={{ padding: 24, textAlign: "center", color: "var(--muted)", fontSize: 13 }}>Loading…</p>;
-  if (!invoices.length) return <p style={{ padding: 24, textAlign: "center", color: "var(--muted)", fontSize: 13 }}>No invoices sent yet.</p>;
-
-  return (
-    <div style={{ overflowY: "auto", flex: 1, padding: "12px 0" }}>
-      {invoices.map((inv) => (
-        <a
-          key={inv.id}
-          href={`/invoice/${inv.id}`}
-          target="_blank"
-          rel="noreferrer"
-          style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 16px", textDecoration: "none", borderBottom: `1px solid ${border}`, transition: "background 0.1s" }}
-          onMouseEnter={(e) => e.currentTarget.style.background = bg}
-          onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
-        >
-          <div style={{ width: 32, height: 32, borderRadius: 8, background: "#f0fdf4", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={accent} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-              <polyline points="14 2 14 8 20 8" />
-            </svg>
-          </div>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <p style={{ margin: 0, fontSize: 13, fontWeight: 600, color: text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-              {inv.customer_name}
-            </p>
-            <p style={{ margin: "2px 0 0", fontSize: 11, color: muted }}>{inv.customer_email} · Due {formatDateZA(inv.due_date)}</p>
-          </div>
-          <div style={{ textAlign: "right", flexShrink: 0, display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 5 }}>
-            <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: accent }}>{formatZAR(inv.total)}</p>
-            {statusBadge(inv.status, inv.due_date)}
-            {inv.status === "customer_claimed_paid" && (
-              <button
-                onClick={(e) => handleVerify(e, inv.id)}
-                disabled={verifying === inv.id}
-                style={{
-                  marginTop: 2, padding: "4px 10px", borderRadius: 6, border: "none",
-                  background: "var(--green)", color: "white", fontSize: 11, fontWeight: 600,
-                  cursor: verifying === inv.id ? "not-allowed" : "pointer",
-                  opacity: verifying === inv.id ? 0.6 : 1,
-                }}
-              >
-                {verifying === inv.id ? "Verifying…" : "Verify Payment"}
-              </button>
-            )}
-          </div>
-        </a>
-      ))}
-    </div>
-  );
-}
-
 // ── Invoice Agent Chat Tab ────────────────────────────────────────────────────
 
 export default function InvoiceAgentTab() {
-  const [view, setView] = useState("chat"); // "chat" | "sent"
-  const [sentRefreshKey, setSentRefreshKey] = useState(0);
   const [messages, setMessages] = useState([
     { role: "assistant", content: GREETING },
   ]);
@@ -370,29 +259,14 @@ export default function InvoiceAgentTab() {
           <p style={{ margin: 0, fontSize: 13, fontWeight: 600, color: text, lineHeight: 1 }}>Invoice Agent</p>
           <p style={{ margin: "3px 0 0", fontSize: 11, color: muted }}>AI-powered invoicing · Durban Plumbing</p>
         </div>
-        <div style={{ marginLeft: "auto", display: "flex", gap: 4 }}>
-          {["chat", "sent"].map((v) => (
-            <button
-              key={v}
-              onClick={() => { setView(v); if (v === "sent") setSentRefreshKey((k) => k + 1); }}
-              style={{
-                padding: "5px 12px", borderRadius: 7, border: "none", fontSize: 12, fontWeight: 600, cursor: "pointer",
-                background: view === v ? accent : "transparent",
-                color: view === v ? "white" : muted,
-                transition: "background 0.15s, color 0.15s",
-              }}
-            >
-              {v === "chat" ? "New" : "Sent"}
-            </button>
-          ))}
+        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6 }}>
+          <span style={{ width: 7, height: 7, borderRadius: "50%", background: accent, display: "inline-block" }} />
+          <span style={{ fontSize: 11, color: muted }}>Online</span>
         </div>
       </div>
 
-      {/* Sent list */}
-      {view === "sent" && <SentInvoicesList refreshKey={sentRefreshKey} />}
-
       {/* Chat area */}
-      {view === "chat" && <div style={{ flex: 1, overflowY: "auto", padding: "16px", display: "flex", flexDirection: "column", gap: 12 }}>
+      <div style={{ flex: 1, overflowY: "auto", padding: "16px", display: "flex", flexDirection: "column", gap: 12 }}>
         {messages.map((msg, i) => (
           <div key={i} style={{ display: "flex", justifyContent: msg.role === "user" ? "flex-end" : "flex-start", alignItems: "flex-start", gap: 8 }}>
             {msg.role === "assistant" && (
@@ -441,15 +315,15 @@ export default function InvoiceAgentTab() {
 
         {invoice && (
           <div style={{ marginTop: 4 }}>
-            <InvoicePreview invoice={invoice} onEdit={handleEdit} onSent={() => setSentRefreshKey((k) => k + 1)} />
+            <InvoicePreview invoice={invoice} onEdit={handleEdit} onSent={() => {}} />
           </div>
         )}
 
         <div ref={bottomRef} />
-      </div>}
+      </div>
 
       {/* Input bar */}
-      {view === "chat" && <div style={{ flexShrink: 0, background: card, borderTop: `1px solid ${border}`, padding: "12px 16px" }}>
+      <div style={{ flexShrink: 0, background: card, borderTop: `1px solid ${border}`, padding: "12px 16px" }}>
         <div style={{ display: "flex", alignItems: "flex-end", gap: 8 }}>
           <textarea
             ref={textareaRef}
@@ -501,7 +375,7 @@ export default function InvoiceAgentTab() {
           </button>
         </div>
         <p style={{ margin: "6px 0 0", textAlign: "center", fontSize: 11, color: muted }}>Enter to send · Shift+Enter for new line</p>
-      </div>}
+      </div>
 
       <style>{`
         @keyframes bounce {
